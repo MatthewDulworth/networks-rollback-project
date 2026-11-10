@@ -13,6 +13,10 @@ For testing I will write a wrapper that can add artificial latenecy/packet loss 
 
 Will be implemented in C, POSIX sockets for networking, raylib for graphics and input, no rollback or game-networking specific libraries will be used.
 
+Optionals:
+- A matchmaking server to connect players by code.
+- A download server to let people get the game themselves.
+
 references:
 - Rollback broad overview: https://words.infil.net/w01-netcode.html
 - Open source rollback implementation for reference: https://github.com/pond3r/ggpo
