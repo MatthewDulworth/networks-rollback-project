@@ -1,6 +1,4 @@
 #include "raylib.h"
-#include <inttypes.h>
-#include <stdio.h>
 #include <string.h>
 #include "sim/sim.h"
 
@@ -9,67 +7,94 @@
 #define TICK_THRESHOLD (STEP / 30.0)
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
+// Sim units are subpixels; raylib draws in pixels. Floats are fine here:
+// rendering only reads the state, so it can't cause a desync.
+static float to_px(int32_t subpixels) {
+    return (float)subpixels / SUB_PIXEL_FACTOR;
+}
+
+static void render(const GameState *state) {
+    for (int i = 0; i < NUM_MAP_OBJ; i++) {
+        const Collision *obj = &MapCollision[i];
+        Rectangle r = {
+            to_px(obj->origin.x), to_px(obj->origin.y),
+            to_px(obj->bounds.x), to_px(obj->bounds.y),
+        };
+        DrawRectangleRec(r, DARKGRAY);
+    }
+
+    const Color player_colors[MAX_PLAYERS] = { BLUE, RED };
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const Player *p = &state->players[i];
+        Rectangle r = {
+            to_px(p->position.x), to_px(p->position.y),
+            to_px(PLAYER_WIDTH), to_px(PLAYER_HEIGHT),
+        };
+        DrawRectangleRec(r, player_colors[i]);
+
+        // Small mark on the facing side so direction is visible.
+        float mark_x = p->facing_right ? r.x + r.width : r.x - 3;
+        DrawRectangleRec((Rectangle){ mark_x, r.y + 2, 3, 3 }, BLACK);
+    }
+}
+
 int main(void) {
-    InitWindow(800, 450, "Rollback Fighter");
+    InitWindow(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT, "Rollback Fighter");
 
     Tick next_tick = 0;
 
-    // memset rather than `= {0}`: it also zeroes struct padding bytes, so the
-    // state can later be hashed/compared byte-for-byte for desync detection.
     GameState state;
-    memset(&state, 0, sizeof(state));
+    GameState next_state;
+    sim_init(&state);
+
     double total_time = 0;
-    double last_frame_time = 0;
+
+    Input input[MAX_PLAYERS];
 
     while (!WindowShouldClose()) {
-        last_frame_time = total_time;
         total_time = GetTime();
-        double delta = total_time - last_frame_time;
 
         // -------------------------------------------
         // Input
         // -------------------------------------------
-        Input input = 0;
-        if (IsKeyDown(KEY_A)) input |= INPUT_MOVE_LEFT;
-        if (IsKeyDown(KEY_D)) input |= INPUT_MOVE_RIGHT;
-        if (IsKeyDown(KEY_W)) input |= INPUT_MOVE_UP;
-        if (IsKeyDown(KEY_S)) input |= INPUT_MOVE_DOWN;
+        input[PLAYER_1] = 0;
+        if (IsKeyDown(KEY_A)) input[PLAYER_1] |= INPUT_MOVE_LEFT;
+        if (IsKeyDown(KEY_D)) input[PLAYER_1] |= INPUT_MOVE_RIGHT;
+        if (IsKeyDown(KEY_W)) input[PLAYER_1] |= INPUT_MOVE_UP;
+        if (IsKeyDown(KEY_S)) input[PLAYER_1] |= INPUT_MOVE_DOWN;
+        if (IsKeyDown(KEY_SPACE)) input[PLAYER_1] |= INPUT_JUMP;
+
+        input[PLAYER_2] = 0;
+        if (IsKeyDown(KEY_L)) input[PLAYER_2] |= INPUT_MOVE_LEFT;
+        if (IsKeyDown(KEY_APOSTROPHE)) input[PLAYER_2] |= INPUT_MOVE_RIGHT;
+        if (IsKeyDown(KEY_P)) input[PLAYER_2] |= INPUT_MOVE_UP;
+        if (IsKeyDown(KEY_SEMICOLON)) input[PLAYER_2] |= INPUT_MOVE_DOWN;
+        if (IsKeyDown(KEY_COMMA)) input[PLAYER_2] |= INPUT_JUMP;
 
         // -------------------------------------------
         // Simulate
         // -------------------------------------------
         double elapsed = 0;
-        int ticks_this_frame = 0;
 
         while (
-            total_time >= next_tick * STEP - TICK_THRESHOLD 
+            total_time >= next_tick * STEP - TICK_THRESHOLD
             && elapsed < (STEP - CATCHUP_MARGIN)) {
-            // input = get_input(next_tick)
-            // state = sim(input, state)
+            sim(input, &state, &next_state);
+            // memcpy, not `state = next_state`: struct assignment may skip
+            // padding bytes, and we want them to stay zero for hashing.
+            memcpy(&state, &next_state, sizeof state);
+
             elapsed = GetTime() - total_time;
             next_tick += 1;
-            ticks_this_frame +=1;
         }
 
         // -------------------------------------------
         // Render
         // -------------------------------------------
-        char msg[50];
-
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        
-        snprintf(msg, sizeof(msg), "Delta: %.4f. Total: %.2f", delta, total_time);
-        DrawText(msg, 190, 200, 20, BLACK);
 
-        snprintf(msg, sizeof(msg), "Tick: %" PRId32 ". Diff: %.4f", next_tick, total_time - (next_tick * STEP));
-        DrawText(msg, 190, 230, 20, BLACK);
-
-        if (ticks_this_frame != 1) {
-            printf("Current Tick: %" PRId32 ", Time: %.4f, Ticks: %d\n", next_tick, total_time, ticks_this_frame);
-        }
-
-        // render(state)
+        render(&state);
 
         EndDrawing();
 
