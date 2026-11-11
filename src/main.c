@@ -62,11 +62,11 @@ int main(void) {
         snprintf(msg, sizeof(msg), "Delta: %.4f. Total: %.2f", delta, total_time);
         DrawText(msg, 190, 200, 20, BLACK);
 
-        snprintf(msg, sizeof(msg), "Tick: %" PRIu32 ". Diff: %.4f", next_tick, total_time - (next_tick * STEP));
+        snprintf(msg, sizeof(msg), "Tick: %" PRId32 ". Diff: %.4f", next_tick, total_time - (next_tick * STEP));
         DrawText(msg, 190, 230, 20, BLACK);
 
         if (ticks_this_frame != 1) {
-            printf("Current Tick: %" PRIu32 ", Time: %.4f, Ticks: %d\n", next_tick, total_time, ticks_this_frame);
+            printf("Current Tick: %" PRId32 ", Time: %.4f, Ticks: %d\n", next_tick, total_time, ticks_this_frame);
         }
 
         // render(state)
