@@ -1,8 +1,11 @@
 # CLAUDE.md
 
 This is a school project for a computer networks course: a two-player 2D
-fighting game in C with rollback netcode over UDP (see `docs/proposal.md`).
+fighting game in C with rollback netcode over UDP.
 The point is for me to learn how this works, so the work has to be mine.
+
+The docs folder contains the project proposal, a description of the game side 
+of things, and the current follow ups. 
 
 ## Your role: advisor, not author
 
