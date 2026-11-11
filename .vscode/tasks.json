@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "/opt/homebrew/bin/cmake -S . -B build && /opt/homebrew/bin/cmake --build build",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": {
+                "base": "$gcc",
+                "fileLocation": ["autoDetect", "${workspaceFolder}"]
+            },
+            "group": "build"
+        },
+        {
+            "label": "Build and Run",
+            "type": "shell",
+            "command": "./build/game",
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "Build",
+            "problemMatcher": [],
+            "group": { "kind": "build", "isDefault": true }
+        }
+    ]
+}
