@@ -10,6 +10,7 @@
 #define MAX_BULLETS 16
 
 typedef uint16_t Input;
+typedef int32_t Tick;
 
 enum InputFields {
     INPUT_MOVE_LEFT = 1 << 0,
@@ -64,7 +65,7 @@ typedef struct {
 
 typedef struct {
     // Frames since the begining of the sim.
-    int32_t frame_number;
+    Tick tick;
 
     uint8_t round_number; // Which round it is.
     uint8_t kills[MAX_PLAYERS]; // How many kills each player has
