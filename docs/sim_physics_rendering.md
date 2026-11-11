@@ -3,11 +3,6 @@
 Notes on the first playable version of the simulation: player movement,
 floor collision, rendering, and calling the sim from the main loop.
 
-Written with Claude (as requested): player physics, `sim_init`, the
-`sim.h`/`sim.c` split, rendering, and wiring `sim()` into the loop. The
-main-loop timing, input sampling, `GameState` layout and key bindings were
-already mine.
-
 ## Where things live
 
 | File | Contains |
