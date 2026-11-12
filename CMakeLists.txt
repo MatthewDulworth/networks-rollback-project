@@ -11,6 +11,7 @@ endif()
 
 find_package(raylib REQUIRED)
 
-add_executable(game src/main.c src/sim/sim.c)
+add_executable(game src/main.c src/sim/sim.c src/rollback/rollback.c)
+target_include_directories(game PRIVATE src)
 target_link_libraries(game PRIVATE raylib)
 target_compile_options(game PRIVATE -Wall -Wextra)
