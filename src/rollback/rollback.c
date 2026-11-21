@@ -242,6 +242,7 @@ Input get_local_input(Tick tick) {
 // --------------------------------------------------------
 void save_state(Tick tick, const GameState *state) {
     assert(tick >= 0);
+    assert(state->tick == tick);
 
     // Find the slot 
     size_t index = ring_index(tick, STATE_BUFFER_SIZE);

@@ -14,4 +14,18 @@ find_package(raylib REQUIRED)
 add_executable(game src/main.c src/sim/sim.c src/rollback/rollback.c)
 target_include_directories(game PRIVATE src)
 target_link_libraries(game PRIVATE raylib)
-target_compile_options(game PRIVATE -Wall -Wextra)
+target_compile_options(game PRIVATE
+    -Wall -Wextra
+    # Promote warnings that are almost always real bugs in C to errors.
+    -Werror=incompatible-pointer-types
+    -Werror=int-conversion
+    -Werror=implicit-function-declaration
+    -Werror=return-type
+)
+
+# Debug builds only: AddressSanitizer catches out-of-bounds and use-after-free
+# memory access, UndefinedBehaviorSanitizer catches things like signed
+# overflow. Both stop at the faulting line. Runs ~2x slower.
+set(SANITIZERS -fsanitize=address,undefined -fno-omit-frame-pointer)
+target_compile_options(game PRIVATE $<$<CONFIG:Debug>:${SANITIZERS}>)
+target_link_options(game PRIVATE $<$<CONFIG:Debug>:${SANITIZERS}>)
