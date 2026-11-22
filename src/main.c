@@ -2,7 +2,6 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include "sim/sim.h"
 #include "rollback/rollback.h"
 #include "rollback/sync_check.h"
@@ -12,6 +11,7 @@
 #include "net/session.h"
 #include "render/render.h"
 #include "args.h"
+#include "input.h"
 
 #define STEP (1.0 / 60.0)
 #define CATCHUP_MARGIN (0.004)
@@ -47,38 +47,6 @@ static void stats_note_rollback(Tick depth) {
     if (depth > stats_current.max_depth) {
         stats_current.max_depth = depth;
     }
-}
-
-// --------------------------------------------------------
-// Netsim hotkeys
-// --------------------------------------------------------
-// Number keys, not F-keys: on a Mac laptop F-keys need fn held down.
-#define LAG_STEP_MS 20
-#define JITTER_STEP_MS 10
-#define LOSS_STEP_PCT 5
-
-// True on the frame a key goes down. Built from IsKeyDown because input is
-// polled twice per frame, which breaks raylib's IsKeyPressed (see the
-// comment at PollInputEvents in main).
-static bool key_went_down(int key) {
-    static bool was_down[512];
-    assert(key >= 0 && key < 512);
-    bool down = IsKeyDown(key);
-    bool went_down = down && !was_down[key];
-    was_down[key] = down;
-    return went_down;
-}
-
-static void handle_netsim_hotkeys(void) {
-    NetsimSettings s = netsim_get();
-    if (key_went_down(KEY_ONE))   s.lag_ms -= LAG_STEP_MS;
-    if (key_went_down(KEY_TWO))   s.lag_ms += LAG_STEP_MS;
-    if (key_went_down(KEY_THREE)) s.jitter_ms -= JITTER_STEP_MS;
-    if (key_went_down(KEY_FOUR))  s.jitter_ms += JITTER_STEP_MS;
-    if (key_went_down(KEY_FIVE))  s.loss_pct -= LOSS_STEP_PCT;
-    if (key_went_down(KEY_SIX))   s.loss_pct += LOSS_STEP_PCT;
-    if (key_went_down(KEY_ZERO))  memset(&s, 0, sizeof s);
-    netsim_set(s);  // clamps, so going below 0 or above the max is harmless
 }
 
 // Run one tick: snapshot the state before it, look up both players' inputs
@@ -154,22 +122,9 @@ int main(int argc, char **argv) {
         // -------------------------------------------
         // Capture Input
         // -------------------------------------------
-        // Each peer reads one keyboard, whichever player it controls. Only
-        // the focused window gets key events, so with two local windows
-        // click the one you want to play.
-        local_input = 0;
-        if (IsKeyDown(KEY_A)) local_input |= INPUT_MOVE_LEFT;
-        if (IsKeyDown(KEY_D)) local_input |= INPUT_MOVE_RIGHT;
-        if (IsKeyDown(KEY_W)) local_input |= INPUT_MOVE_UP;
-        if (IsKeyDown(KEY_S)) local_input |= INPUT_MOVE_DOWN;
-        if (IsKeyDown(KEY_SPACE)) local_input |= INPUT_JUMP;
-        if (IsKeyDown(KEY_LEFT))  local_input |= INPUT_AIM_LEFT;
-        if (IsKeyDown(KEY_RIGHT)) local_input |= INPUT_AIM_RIGHT;
-        if (IsKeyDown(KEY_UP))    local_input |= INPUT_AIM_UP;
-        if (IsKeyDown(KEY_DOWN))  local_input |= INPUT_AIM_DOWN;
-        // J, or right shift which sits next to the arrow keys on a laptop.
-        if (IsKeyDown(KEY_J) || IsKeyDown(KEY_RIGHT_SHIFT)) local_input |= INPUT_SHOOT;
-
+        // Only the focused window gets key events, so with two local
+        // windows click the one you want to play.
+        local_input = read_local_input();
         handle_netsim_hotkeys();
 
         // -------------------------------------------
