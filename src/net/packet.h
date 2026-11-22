@@ -1,0 +1,44 @@
+#pragma once
+
+// Converts between packets the game uses (structs) and the bytes that go over
+// the network. Knows nothing about sockets; see net.h for that.
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "sim/sim.h"
+
+// Most inputs one packet can carry. Must be at least the rollback input ring
+// size (INPUT_BUFFER_SIZE in rollback.c), since find_inputs_to_resend can
+// return a range that long.
+#define PACKET_MAX_INPUTS 32
+
+// Wire format, all multi-byte fields big-endian (network byte order):
+//
+//   offset  size  field
+//   0       4     magic       PACKET_MAGIC, rejects stray or foreign packets
+//   4       4     ack         int32, newest tick we have all remote inputs for
+//   8       4     first_tick  int32, tick of inputs[0]
+//   12      1     count       number of inputs that follow (0..PACKET_MAX_INPUTS)
+//   13      2*n   inputs      uint16 each
+#define PACKET_MAGIC 0x52424631u  // "RBF1": rollback fighter, format 1
+#define PACKET_HEADER_SIZE 13
+#define PACKET_MAX_SIZE (PACKET_HEADER_SIZE + 2 * PACKET_MAX_INPUTS)
+
+// A decoded packet, for use in the program. Never sent as-is: its layout in
+// memory (padding, byte order) isn't the wire format above.
+typedef struct {
+    Tick ack;
+    Tick first_tick;
+    int count;
+    Input inputs[PACKET_MAX_INPUTS];
+} InputPacket;
+
+// Write packet into buf in the wire format. Returns the number of bytes
+// written, or 0 if buf is too small or count is out of range.
+size_t packet_encode(const InputPacket *packet, uint8_t *buf, size_t capacity);
+
+// Read a packet from len bytes of buf into out. Returns false (and leaves
+// out unspecified) if the bytes aren't a valid packet: too short, wrong magic,
+// count too large, or len doesn't match count.
+bool packet_decode(const uint8_t *buf, size_t len, InputPacket *out);

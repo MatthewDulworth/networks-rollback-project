@@ -1,8 +1,12 @@
 #include "raylib.h"
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "sim/sim.h"
 #include "rollback/rollback.h"
+#include "net/net.h"
+#include "net/packet.h"
 
 #define STEP (1.0 / 60.0)
 #define CATCHUP_MARGIN (0.004)
@@ -10,42 +14,97 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 // --------------------------------------------------------
-// Fake remote (testing only, replaced by UDP later)
+// Command line
 // --------------------------------------------------------
-// Player 2's keyboard input is treated as if it came from the network: each
-// input is held back for FAKE_LATENCY seconds before add_remote_input sees it.
-// Try 0 (no rollbacks), ~0.08 (visible rollbacks) and ~0.25 (stalls).
-#define FAKE_LATENCY (0.080)
-
-// Inputs "in flight". Only filled while ticks advance, so it holds about
-// FAKE_LATENCY / STEP entries. 64 covers up to ~1 s of latency.
-#define FAKE_QUEUE_SIZE 64
 
 typedef struct {
-    Tick tick;
-    Input input;
-    double arrive_at;
-} FakePacket;
+    uint16_t local_port;
+    const char *peer_ip;
+    uint16_t peer_port;
+    int player;  // PLAYER_1 or PLAYER_2; must be opposite on the two peers
+} Args;
 
-// FIFO: latency is constant, so packets arrive in the order they were sent.
-static FakePacket fake_queue[FAKE_QUEUE_SIZE];
-static int fake_head = 0;  // index of the oldest packet
-static int fake_count = 0;
-
-static void fake_remote_send(Tick tick, Input input, double now) {
-    assert(fake_count < FAKE_QUEUE_SIZE && "fake queue full: latency too high");
-    int tail = (fake_head + fake_count) % FAKE_QUEUE_SIZE;
-    fake_queue[tail] = (FakePacket){ tick, input, now + FAKE_LATENCY };
-    fake_count++;
+static bool parse_port(const char *text, uint16_t *out) {
+    char *end;
+    long value = strtol(text, &end, 10);
+    // end == text: no digits at all. *end != '\0': junk after the number.
+    if (end == text || *end != '\0' || value < 1 || value > 65535) {
+        return false;
+    }
+    *out = (uint16_t)value;
+    return true;
 }
 
-// Hand every packet whose arrival time has passed to the rollback module.
-static void fake_remote_receive(double now) {
-    while (fake_count > 0 && fake_queue[fake_head].arrive_at <= now) {
-        add_remote_input(fake_queue[fake_head].tick, fake_queue[fake_head].input);
-        fake_head = (fake_head + 1) % FAKE_QUEUE_SIZE;
-        fake_count--;
+static bool parse_args(int argc, char **argv, Args *args) {
+    if (argc != 5) {
+        return false;
     }
+    args->peer_ip = argv[2];
+    if (!parse_port(argv[1], &args->local_port)
+        || !parse_port(argv[3], &args->peer_port)) {
+        return false;
+    }
+    if (strcmp(argv[4], "0") == 0) {
+        args->player = PLAYER_1;
+    } else if (strcmp(argv[4], "1") == 0) {
+        args->player = PLAYER_2;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// --------------------------------------------------------
+// Network glue: rollback module <-> packets <-> net module
+// --------------------------------------------------------
+
+// Drain every waiting packet into the rollback module. Returns true if at
+// least one valid packet arrived.
+static bool receive_packets(void) {
+    uint8_t buf[PACKET_MAX_SIZE];
+    bool got_any = false;
+    int len;
+
+    while ((len = net_receive(buf, sizeof buf)) > 0) {
+        InputPacket packet;
+        if (!packet_decode(buf, (size_t)len, &packet)) {
+            TraceLog(LOG_WARNING, "net: dropped malformed packet (%d bytes)", len);
+            continue;
+        }
+        got_any = true;
+
+        receive_ack(packet.ack);
+        // Every packet repeats all inputs the peer hasn't seen acked, so
+        // most of these are duplicates. add_remote_input ignores those (and
+        // anything past a gap), so no filtering is needed here.
+        for (int i = 0; i < packet.count; i++) {
+            add_remote_input(packet.first_tick + i, packet.inputs[i]);
+        }
+    }
+    return got_any;
+}
+
+// Send our ack and every local input the peer hasn't acked. Called once per
+// frame, even when nothing advanced: after a lost packet this resend is the
+// only way the peer ever gets those inputs.
+static void send_packet(void) {
+    InputPacket packet;
+    packet.ack = get_last_confirmed_remote_tick();
+    find_inputs_to_resend(&packet.first_tick, &packet.count);
+
+    // Keep the oldest inputs if there are too many: the peer needs them in
+    // order, and the rest go out once these are acked.
+    if (packet.count > PACKET_MAX_INPUTS) {
+        packet.count = PACKET_MAX_INPUTS;
+    }
+    for (int i = 0; i < packet.count; i++) {
+        packet.inputs[i] = get_local_input(packet.first_tick + i);
+    }
+
+    uint8_t buf[PACKET_MAX_SIZE];
+    size_t len = packet_encode(&packet, buf, sizeof buf);
+    assert(len > 0);  // count is clamped and buf is max size, so can't fail
+    net_send(buf, len);
 }
 
 // --------------------------------------------------------
@@ -138,103 +197,133 @@ static void process_tick(Tick tick, GameState *state, GameState *next_state) {
     memcpy(state, next_state, sizeof *state);
 }
 
-int main(void) {
-    InitWindow(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT, "Rollback Fighter");
+int main(int argc, char **argv) {
+    Args args;
+    if (!parse_args(argc, argv, &args)) {
+        fprintf(stderr,
+                "usage: %s <local_port> <peer_ip> <peer_port> <player 0|1>\n"
+                "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n",
+                argv[0], argv[0]);
+        return 1;
+    }
+    // Before the window, so a bad address or busy port exits immediately.
+    if (!net_init(args.local_port, args.peer_ip, args.peer_port)) {
+        return 1;
+    }
+
+    char title[64];
+    snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)",
+             args.player + 1, args.player == PLAYER_1 ? "blue" : "red");
+    InitWindow(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT, title);
+    // Two local peers: put player 1 on the left edge, player 2 on the right,
+    // so the windows don't start on top of each other.
+    int monitor_width = GetMonitorWidth(GetCurrentMonitor());
+    SetWindowPosition(args.player == PLAYER_1 ? 0 : monitor_width - MAP_PIXEL_WIDTH, 60);
 
     Tick next_tick = 0;
 
     GameState state;
     GameState next_state;
     sim_init(&state);
-    rollback_init(PLAYER_1); // player Needs to be set at runtime once we have two clients
+    rollback_init(args.player);
     desync_check_init(&state);
 
-    double total_time = 0;
+    // Stand-in for the start handshake (see follow_ups.md, "Shared start
+    // time"): don't start ticking until the first packet from the peer
+    // arrives. Both sides send every frame, so each starts within about one
+    // one-way trip of the other. Tick times are measured from start_time.
+    bool peer_seen = false;
+    double start_time = 0;
 
-    Input input[MAX_PLAYERS];
+    Input local_input = 0;
 
     while (!WindowShouldClose()) {
-        total_time = GetTime();
+        double frame_start = GetTime();
 
         // -------------------------------------------
         // Capture Input
         // -------------------------------------------
-        input[PLAYER_1] = 0;
-        if (IsKeyDown(KEY_A)) input[PLAYER_1] |= INPUT_MOVE_LEFT;
-        if (IsKeyDown(KEY_D)) input[PLAYER_1] |= INPUT_MOVE_RIGHT;
-        if (IsKeyDown(KEY_W)) input[PLAYER_1] |= INPUT_MOVE_UP;
-        if (IsKeyDown(KEY_S)) input[PLAYER_1] |= INPUT_MOVE_DOWN;
-        if (IsKeyDown(KEY_SPACE)) input[PLAYER_1] |= INPUT_JUMP;
-
-
-        input[PLAYER_2] = 0;
-        if (IsKeyDown(KEY_L)) input[PLAYER_2] |= INPUT_MOVE_LEFT;
-        if (IsKeyDown(KEY_APOSTROPHE)) input[PLAYER_2] |= INPUT_MOVE_RIGHT;
-        if (IsKeyDown(KEY_P)) input[PLAYER_2] |= INPUT_MOVE_UP;
-        if (IsKeyDown(KEY_SEMICOLON)) input[PLAYER_2] |= INPUT_MOVE_DOWN;
-        if (IsKeyDown(KEY_COMMA)) input[PLAYER_2] |= INPUT_JUMP;
+        // Each peer reads one keyboard, whichever player it controls. Only
+        // the focused window gets key events, so with two local windows
+        // click the one you want to play.
+        local_input = 0;
+        if (IsKeyDown(KEY_A)) local_input |= INPUT_MOVE_LEFT;
+        if (IsKeyDown(KEY_D)) local_input |= INPUT_MOVE_RIGHT;
+        if (IsKeyDown(KEY_W)) local_input |= INPUT_MOVE_UP;
+        if (IsKeyDown(KEY_S)) local_input |= INPUT_MOVE_DOWN;
+        if (IsKeyDown(KEY_SPACE)) local_input |= INPUT_JUMP;
 
         // -------------------------------------------
         // Receive
         // -------------------------------------------
         // Before rollback, so the newest remote inputs are used to fix the
         // past before we build new ticks on top of it.
-        fake_remote_receive(GetTime());
+        if (receive_packets() && !peer_seen) {
+            peer_seen = true;
+            start_time = frame_start;
+            TraceLog(LOG_INFO, "net: peer connected, starting match");
+        }
 
-        // -------------------------------------------
-        // Rollback
-        // -------------------------------------------
-        Tick rollback_point = find_rollback_point();
-        if (rollback_point != NO_TICK) {
-            // can_advance keeps guessed ticks to MAX_ROLLBACK, so a deeper
-            // rollback means that limit was broken somewhere.
-            Tick depth = next_tick - rollback_point;
-            TraceLog(LOG_INFO, "rollback: to tick %d, depth %d", rollback_point, depth);
-            assert(depth <= MAX_ROLLBACK);
+        if (peer_seen) {
+            // Seconds since the match started on this machine.
+            double total_time = frame_start - start_time;
 
-            load_state(rollback_point, &state); // Load the state from the rollback point into current state
+            // -------------------------------------------
+            // Rollback
+            // -------------------------------------------
+            Tick rollback_point = find_rollback_point();
+            if (rollback_point != NO_TICK) {
+                // can_advance keeps guessed ticks to MAX_ROLLBACK, so a deeper
+                // rollback means that limit was broken somewhere.
+                Tick depth = next_tick - rollback_point;
+                TraceLog(LOG_INFO, "rollback: to tick %d, depth %d", rollback_point, depth);
+                assert(depth <= MAX_ROLLBACK);
 
-            // sim back up to the current tick
-            for (Tick t = rollback_point; t < next_tick; t++) { 
-                process_tick(t, &state, &next_state);
+                load_state(rollback_point, &state); // Load the state from the rollback point into current state
+
+                // sim back up to the current tick
+                for (Tick t = rollback_point; t < next_tick; t++) {
+                    process_tick(t, &state, &next_state);
+                }
+
+                clear_rollback_point();
             }
 
-            clear_rollback_point();
+            // -------------------------------------------
+            // Simulate
+            // -------------------------------------------
+            double elapsed = 0;
+
+            while (
+                total_time >= next_tick * STEP - TICK_THRESHOLD
+                && elapsed < (STEP - CATCHUP_MARGIN)) {
+                // Too many ticks would be running on guessed remote input: stop
+                // advancing this frame. `break`, not `continue`: the time
+                // condition is still true, so `continue` would spin here instead
+                // of going on to receive, send and render.
+                if (!can_advance(next_tick)) {
+                    break;
+                }
+
+                // Record this frame's sample for the tick it applies to. Every
+                // tick run this frame records the same sample.
+                write_local_input(next_tick + INPUT_DELAY, local_input);
+
+                process_tick(next_tick, &state, &next_state);
+
+                elapsed = GetTime() - frame_start;
+                next_tick += 1;
+            }
+
+            desync_check(next_tick);
         }
 
         // -------------------------------------------
-        // Simulate
+        // Send
         // -------------------------------------------
-        double elapsed = 0;
-
-        while (
-            total_time >= next_tick * STEP - TICK_THRESHOLD
-            && elapsed < (STEP - CATCHUP_MARGIN)) {
-            // Too many ticks would be running on guessed remote input: stop
-            // advancing this frame. `break`, not `continue`: the time
-            // condition is still true, so `continue` would spin here instead
-            // of going on to receive, send and render.
-            if (!can_advance(next_tick)) {
-                break;
-            }
-
-            // Record this frame's sample for the tick it applies to. Every
-            // tick run this frame records the same sample.
-            write_local_input(next_tick + INPUT_DELAY, input[PLAYER_1]);
-            fake_remote_send(next_tick + INPUT_DELAY, input[PLAYER_2], GetTime());
-
-            process_tick(next_tick, &state, &next_state);
-
-            elapsed = GetTime() - total_time;
-            next_tick += 1;
-        }
-
-        desync_check(next_tick);
-
-        // -------------------------------------------
-        // Send Inputs
-        // -------------------------------------------
-        // later
+        // Every frame, including while waiting for the peer (an empty packet
+        // is what lets the peer see us) and while stalled.
+        send_packet();
 
         // -------------------------------------------
         // Render
@@ -243,10 +332,17 @@ int main(void) {
         ClearBackground(RAYWHITE);
 
         render(&state);
+        if (!peer_seen) {
+            DrawText("Waiting for peer...", 20, 20, 20, GRAY);
+        }
 
         EndDrawing();
 
-        double time_til_next_tick = MAX(0, next_tick * STEP - GetTime());
+        // Before the match starts there are no ticks to line up with, so
+        // just wait one step between frames.
+        double time_til_next_tick = peer_seen
+            ? MAX(0, next_tick * STEP - (GetTime() - start_time))
+            : STEP;
         WaitTime(time_til_next_tick);
         // EndDrawing() already polled input, but that was before the wait.
         // Poll again so input read at the top of the loop is fresh.
@@ -256,6 +352,7 @@ int main(void) {
         PollInputEvents();
     }
 
+    net_shutdown();
     CloseWindow();
     return 0;
 }

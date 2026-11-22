@@ -29,8 +29,25 @@ From the project root:
 ```sh
 cmake -S . -B build          # configure: generate build files into build/
 cmake --build build          # compile
-./build/game                 # run
+scripts/run_local.sh         # build and run two peers on this machine
 ```
+
+The game needs a peer to play against. Each copy takes
+`<local_port> <peer_ip> <peer_port> <player 0|1>`, and the two sides must use
+mirrored ports and opposite players:
+
+```sh
+./build/game 5000 127.0.0.1 5001 0     # terminal 1
+./build/game 5001 127.0.0.1 5000 1     # terminal 2
+```
+
+`scripts/run_local.sh` does exactly that, prefixes each peer's output with
+`[p1]`/`[p2]`, and stops both when either window closes. Pass a different base
+port if 5000/5001 are taken: `scripts/run_local.sh 6000`. Only the focused
+window receives keys (WASD + Space), so click the window you want to control.
+Across two machines, use each other's LAN IP instead of `127.0.0.1`.
+
+Run the tests with `ctest --test-dir build --output-on-failure`.
 
 You only need the configure step the first time, or after deleting `build/`.
 After that, `cmake --build build` is enough. It re-runs the configure step

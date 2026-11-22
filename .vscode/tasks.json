@@ -13,12 +13,17 @@
             "group": "build"
         },
         {
-            "label": "Build and Run",
+            "label": "Build and Run (two local peers)",
             "type": "shell",
-            "command": "./build/game",
-            "options": { "cwd": "${workspaceFolder}" },
-            "dependsOn": "Build",
-            "problemMatcher": [],
+            "command": "./scripts/run_local.sh",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": { "PATH": "/opt/homebrew/bin:${env:PATH}" }
+            },
+            "problemMatcher": {
+                "base": "$gcc",
+                "fileLocation": ["autoDetect", "${workspaceFolder}"]
+            },
             "group": { "kind": "build", "isDefault": true }
         }
     ]

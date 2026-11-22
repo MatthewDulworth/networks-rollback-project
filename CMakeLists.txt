@@ -11,10 +11,8 @@ endif()
 
 find_package(raylib REQUIRED)
 
-add_executable(game src/main.c src/sim/sim.c src/rollback/rollback.c)
-target_include_directories(game PRIVATE src)
-target_link_libraries(game PRIVATE raylib)
-target_compile_options(game PRIVATE
+# Warnings and sanitizers shared by every target (game and tests).
+set(WARNINGS
     -Wall -Wextra
     # Promote warnings that are almost always real bugs in C to errors.
     -Werror=incompatible-pointer-types
@@ -27,5 +25,25 @@ target_compile_options(game PRIVATE
 # memory access, UndefinedBehaviorSanitizer catches things like signed
 # overflow. Both stop at the faulting line. Runs ~2x slower.
 set(SANITIZERS -fsanitize=address,undefined -fno-omit-frame-pointer)
-target_compile_options(game PRIVATE $<$<CONFIG:Debug>:${SANITIZERS}>)
-target_link_options(game PRIVATE $<$<CONFIG:Debug>:${SANITIZERS}>)
+
+function(apply_project_flags target)
+    target_include_directories(${target} PRIVATE src)
+    target_compile_options(${target} PRIVATE ${WARNINGS} $<$<CONFIG:Debug>:${SANITIZERS}>)
+    target_link_options(${target} PRIVATE $<$<CONFIG:Debug>:${SANITIZERS}>)
+endfunction()
+
+# --------------------------------------------------------
+# Game
+# --------------------------------------------------------
+add_executable(game src/main.c src/sim/sim.c src/rollback/rollback.c src/net/packet.c src/net/net.c)
+target_link_libraries(game PRIVATE raylib)
+apply_project_flags(game)
+
+# --------------------------------------------------------
+# Tests: build, then run with `ctest --test-dir build`
+# --------------------------------------------------------
+enable_testing()
+
+add_executable(packet_test tests/packet_test.c src/net/packet.c)
+apply_project_flags(packet_test)
+add_test(NAME packet COMMAND packet_test)
