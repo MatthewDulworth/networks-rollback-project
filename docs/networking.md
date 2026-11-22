@@ -283,7 +283,9 @@ Extra flags (`--lag`, `--jitter`, `--loss`) are passed through.
 
 - Both can use the same port, since they're different machines. Players must
   be opposite (0 and 1).
-- The overlay shows each machine's own IP to read off.
+- To swap addresses, run the script with no arguments first: it prints this
+  machine's IP (the interface the default route uses, so Wi-Fi, hotspot or
+  Ethernet). The overlay also shows it, as a check once the game is running.
 - macOS asks whether to allow incoming connections the first time. Accept on
   both.
 - Some networks (campus or guest Wi-Fi) block traffic between devices. A phone

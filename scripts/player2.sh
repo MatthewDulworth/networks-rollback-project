@@ -4,6 +4,7 @@
 # Usage: scripts/player2.sh <other_machine_ip> [--lag ms] [--jitter ms] [--loss pct]
 #   e.g. scripts/player2.sh 192.168.1.42
 #
-# The other machine's IP is shown on its overlay ("me ...").
+# Run it with no arguments first: it prints this machine's IP to give to the
+# other player.
 
 exec "$(dirname "$0")/run_peer.sh" 1 "$@"

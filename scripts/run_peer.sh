@@ -13,11 +13,27 @@ cd "$(dirname "$0")/.."
 
 PORT=5000
 
-# Called as run_peer.sh <player> [peer_ip ...]: a missing peer IP means the
-# person forgot it on player1.sh / player2.sh, so describe that command.
+# This machine's LAN IP, or "unknown". Asks which interface the default route
+# (where traffic to other machines goes) uses, so it works on Wi-Fi, a phone
+# hotspot or Ethernet alike. Falls back to en0/en1, the usual Wi-Fi and
+# Ethernet names, if that interface has no IPv4 address (e.g. a VPN tunnel).
+local_ip() {
+    local iface
+    iface=$(route -n get default 2>/dev/null | awk '/interface:/ { print $2 }')
+    for i in $iface en0 en1; do
+        if ipconfig getifaddr "$i" 2>/dev/null; then
+            return
+        fi
+    done
+    echo "unknown"
+}
+
+# Called as run_peer.sh <player> [peer_ip ...]. No peer IP: show this
+# machine's IP so the two players can swap addresses, then how to start.
 if [ "$#" -lt 2 ]; then
-    echo "usage: scripts/player$(( ${1:-0} + 1 )).sh <other_machine_ip> [--lag ms] [--jitter ms] [--loss pct]" >&2
-    echo "  (the other machine's IP is on its overlay, after \"me\")" >&2
+    echo "This machine's IP: $(local_ip)"
+    echo "Give it to the other player, get theirs, then run:"
+    echo "  scripts/player$(( ${1:-0} + 1 )).sh <other_machine_ip> [--lag ms] [--jitter ms] [--loss pct]"
     exit 1
 fi
 PLAYER="$1"
@@ -28,6 +44,8 @@ shift 2
 # checked out. A no-op build takes about a second.
 cmake -S . -B build > /dev/null
 cmake --build build
+
+echo "This machine: $(local_ip):$PORT   connecting to: $PEER_IP:$PORT"
 
 # exec: the game replaces this script, so Ctrl-C goes straight to it.
 # Anything after the peer IP (--lag etc.) is passed through unchanged.

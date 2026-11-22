@@ -65,7 +65,9 @@ opposite players:
 ./build/game 5000 <other_ip> 5000 1     # machine B
 ```
 
-The overlay shows each machine's own IP (the "me" line). Accept the macOS
+To find out what to type, run `scripts/player1.sh` (or `player2.sh`) with no
+arguments on each machine: it prints that machine's IP. The overlay also shows
+it (the "me" line) once the game is running. Accept the macOS
 "allow incoming connections" prompt on both. See `docs/networking.md`.
 
 ### Simulating a bad network
