@@ -145,8 +145,8 @@ returned untouched.
 
 - **Saved-state tick convention:** the state saved for tick N is the state
   **before** tick N runs (so `state->tick == N`, and `save_state` asserts it).
-  `process_tick` in `main.c` saves, gets inputs, then steps the sim.
-- **Where the rollback loop lives:** in `main.c`. This module only stores data
+  `process_tick` in `match.c` saves, gets inputs, then steps the sim.
+- **Where the rollback loop lives:** in `match.c`. This module only stores data
   and answers questions. It never calls `sim()`. That keeps it testable on its
   own and keeps the order of operations visible in one place.
 - **How `local_player` is chosen:** the fourth command-line argument (0 or 1).

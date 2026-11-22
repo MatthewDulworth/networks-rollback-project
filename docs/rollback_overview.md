@@ -251,7 +251,7 @@ suddenly appearing mid-flight.
 | Socket (`net.c`), wire format (`packet.c`), network simulator (`netsim.c`), packets ↔ rollback glue, ping and disconnect (`session.c`) | `src/net/` |
 | Drawing the game and the overlay | `src/render/` |
 | Command line (`args.c`), keyboard and netsim hotkeys (`input.c`) | `src/` |
-| Tick timing, the order of the steps above, rollback/stall stats | `src/main.c` |
+| Tick timing, the order of the steps above, rollback/stall stats, frame advantage correction (`match.c`); window, keyboard, drawing (`main.c`) | `src/` |
 
 Details: `rollback.md`, `networking.md`, `main_loop.md`,
 `sim_physics_rendering.md`, `combat_and_rounds.md`.

@@ -86,7 +86,8 @@ One packet type, sent once per frame in each direction:
   old build and a new build reject each other's packets instead of misreading
   them.
 - `tests/packet_test.c` checks round trips and rejection of bad packets. Run
-  it with `ctest --test-dir build`.
+  it with `ctest --test-dir build`. `tests/netcode_test.c` tests the whole
+  netcode end to end (see `DEVELOPMENT.md`).
 
 ## Packets ↔ rollback (`src/net/session.c`)
 
@@ -136,7 +137,7 @@ Makes a good network behave like a bad one, for testing and the demo.
   router does too.
 - **`netsim_update(now)`** moves packets along: it reads everything from the
   socket into the incoming queue, and sends outgoing packets whose time has
-  come. `main.c` calls it at the start of the frame (before receiving) and
+  come. `match.c` calls it at the start of the frame (before receiving) and
   right after `session_send` (so packets with no delay go out immediately).
 - **Precision:** packets are only released when the loop checks, about every
   16 ms, so delays are rounded up to the frame. Fine at demo-level lag.
@@ -243,7 +244,7 @@ advantage  = next_tick - remote_now
 - Returns 0 until there's an estimate: no RTT yet, or the peer's
   `sender_tick` is still 0 because it hasn't started.
 
-**Correction** (`main.c`): if the advantage is over 1 tick, push `start_time`
+**Correction** (`match.c`): if the advantage is over 1 tick, push `start_time`
 forward by `STEP / 10`. Every later tick is due a little later, so the peer
 that's ahead skips one tick every 10 frames until it's level. Only the peer
 that's ahead adjusts. Changing `start_time` only changes when ticks run, never

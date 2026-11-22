@@ -92,7 +92,16 @@ there.
 | Aim | Arrow keys (falls back to WASD, then facing) |
 | Shoot | J or Right Shift |
 
-Run the tests with `ctest --test-dir build --output-on-failure`.
+Run the tests with `ctest --test-dir build --output-on-failure`:
+
+| Test | What it checks | Time |
+|---|---|---|
+| `packet` | Encoding and decoding packets, rejecting bad ones. | instant |
+| `netcode` | End to end: for each of three links (clean; 100 ms + 10% loss; 250 ms + 20% loss) it starts two real peers on localhost and plays 8 s with scripted random input. Fails on a desync between the peers, a failed assert (including the local desync check), a peer that doesn't finish, hashes that stop being compared, no rollbacks on a lossy link, or a loop that spins instead of sleeping. | ~10 s |
+
+The netcode test needs UDP ports 47100-47105 to be free. Run with
+`./build/netcode_test` to see each peer's numbers (rollbacks, depth, stalls,
+frames per second).
 
 You only need the configure step the first time, or after deleting `build/`.
 After that, `cmake --build build` is enough. It re-runs the configure step

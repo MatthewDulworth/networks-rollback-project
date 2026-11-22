@@ -1,10 +1,16 @@
 # Main loop
 
-What `src/main.c` does each frame, in order, and why the order matters. This
-is where the sim, the rollback module and the network meet. The pieces it
-calls live in their own modules (`session.c`, `render.c`, `input.c`,
-`args.c`, `desync_check.c`, `sync_check.c`); `main.c` keeps the order and the
-timing.
+What happens each frame, in order, and why the order matters. This is where
+the sim, the rollback module and the network meet.
+
+It's split in two:
+- `src/match.c`: the netcode part of a frame (receive, rollback, simulate,
+  frame advantage, send) and the tick timing. It doesn't use raylib, so
+  `tests/netcode_test.c` runs it without a window.
+- `src/main.c`: setup, the window, the keyboard, drawing and waiting.
+
+Each frame, `main.c` calls `match_frame(input)`, draws `match_state()`, then
+sleeps for `match_time_until_next_frame()`.
 
 ## Startup
 
@@ -16,8 +22,9 @@ timing.
 4. Open the window. Player 1's window goes on the left edge of the screen,
    player 2's on the right, so two local copies don't start on top of each
    other.
-5. `sim_init(&state)`, `rollback_init(player)`, `desync_check_init(&state)`,
-   `sync_check_init()`, `session_init()`.
+5. `match_init(player, GetTime)`. It calls `sim_init`, `rollback_init`,
+   `desync_check_init`, `sync_check_init` and `session_init`. The clock is
+   passed in so the test can use its own.
 
 ## Starting the match
 
@@ -132,9 +139,10 @@ Any difference logs `DESYNC at tick T` and asserts.
 
 ## Overlay and stats
 
-Stats are counted in `main.c` because that's where rollbacks and stalls
+Stats are counted in `match.c` because that's where rollbacks and stalls
 happen: `stats_note_rollback(depth)` in the rollback block,
-`stats_current.stalled_frames++` at the stall `break`. See `networking.md` for
+`stats_note_stall()` at the stall `break`. Both per-second counts (for the
+overlay) and totals (for the test) are kept. See `networking.md` for
 what each overlay line means. `main.c` copies the stats and everything else
 the overlay shows into an `OverlayInfo` each frame, so `render.c` only draws
 and never reads the network or rollback modules itself.
