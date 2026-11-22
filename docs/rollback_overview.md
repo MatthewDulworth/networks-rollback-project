@@ -247,9 +247,11 @@ suddenly appearing mid-flight.
 | Concern | Where |
 |---|---|
 | Deterministic game step | `src/sim/` |
-| Input/state history, prediction, misprediction tracking, stall check | `src/rollback/` |
-| Socket (`net.c`), wire format (`packet.c`), network simulator (`netsim.c`) | `src/net/` |
-| Tick timing, the order of the steps above, packets ↔ rollback glue, ping, desync check, overlay | `src/main.c` |
+| Input/state history, prediction, misprediction tracking, stall check (`rollback.c`); local desync check (`desync_check.c`); cross-machine hash check (`sync_check.c`) | `src/rollback/` |
+| Socket (`net.c`), wire format (`packet.c`), network simulator (`netsim.c`), packets ↔ rollback glue, ping and disconnect (`session.c`) | `src/net/` |
+| Drawing the game and the overlay | `src/render/` |
+| Command line (`args.c`), keyboard and netsim hotkeys (`input.c`) | `src/` |
+| Tick timing, the order of the steps above, rollback/stall stats | `src/main.c` |
 
 Details: `rollback.md`, `networking.md`, `main_loop.md`,
 `sim_physics_rendering.md`, `combat_and_rounds.md`.

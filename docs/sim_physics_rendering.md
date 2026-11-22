@@ -10,7 +10,9 @@ the map and rendering. Shooting, bullets, health and rounds are in
 |---|---|
 | `src/sim/sim.h` | The public contract: units and sizes, rules the HUD needs (`MAX_HEALTH`, `MAGAZINE_SIZE`, ...), `IntVector2`, `Collision`, `Input` bits, `extern MapCollision`, `GameState` and its structs, `sim_init()`, `sim()`, `sim_match_winner()`. |
 | `src/sim/sim.c` | Everything private: tuning constants, the map, `static` helpers, and the public functions. |
-| `src/main.c` | Window, input sampling, fixed-timestep loop, `render()`. |
+| `src/main.c` | Window, fixed-timestep loop. |
+| `src/input.c` | Keyboard → `Input` bitmask (`read_local_input()`). |
+| `src/render/render.c` | `render_game()` and the debug overlay. |
 
 The rule: **the header holds only what another file needs** to create, step,
 draw or send a `GameState`. If changing something should never force an edit in
@@ -150,7 +152,7 @@ Each machine controls one player, with the same keys on both:
 | Shoot | J or Right Shift |
 | Network simulator | 1/2 lag, 3/4 jitter, 5/6 loss, 0 reset (see `networking.md`) |
 
-## Rendering (`render()` in `main.c`)
+## Rendering (`render_game()` in `src/render/render.c`)
 
 - It takes `const GameState *`, so the compiler enforces that drawing can't
   change the game.

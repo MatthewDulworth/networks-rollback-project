@@ -1,11 +1,14 @@
 # Main loop
 
 What `src/main.c` does each frame, in order, and why the order matters. This
-is where the sim, the rollback module and the network meet.
+is where the sim, the rollback module and the network meet. The pieces it
+calls live in their own modules (`session.c`, `render.c`, `input.c`,
+`args.c`, `desync_check.c`, `sync_check.c`); `main.c` keeps the order and the
+timing.
 
 ## Startup
 
-1. `parse_args`: `<local_port> <peer_ip> <peer_port> <player 0|1>`, then
+1. `parse_args` (`src/args.c`): `<local_port> <peer_ip> <peer_port> <player 0|1>`, then
    optional `--lag`, `--jitter`, `--loss` (see `networking.md`).
 2. `net_init` **before** the window opens, so a bad address or busy port
    exits immediately with an error.
@@ -13,7 +16,8 @@ is where the sim, the rollback module and the network meet.
 4. Open the window. Player 1's window goes on the left edge of the screen,
    player 2's on the right, so two local copies don't start on top of each
    other.
-5. `sim_init(&state)`, `rollback_init(player)`, `desync_check_init(&state)`.
+5. `sim_init(&state)`, `rollback_init(player)`, `desync_check_init(&state)`,
+   `sync_check_init()`, `session_init()`.
 
 ## Starting the match
 
@@ -27,12 +31,12 @@ runs a little behind, and rollback covers the difference.
 
 | Step | What | Why here |
 |---|---|---|
-| 1. Input | Read the keyboard into `local_input` (`IsKeyDown` only). Handle the netsim hotkeys. | Sampled once per frame. |
-| 2. Receive | `netsim_update`, then `receive_packets`. Update `last_packet_time`, start the match on the first packet, update the disconnect flag and stats window. | **Before rollback**, so the newest remote inputs fix the past before new ticks are built on top of it. |
+| 1. Input | `read_local_input()` (`IsKeyDown` only), then `handle_netsim_hotkeys()`. | Sampled once per frame. |
+| 2. Receive | `netsim_update`, then `session_receive`. Start the match once `session_peer_seen()`, and roll the stats window. | **Before rollback**, so the newest remote inputs fix the past before new ticks are built on top of it. |
 | 3. Rollback | If `find_rollback_point()` gives tick M: `load_state(M)`, then `process_tick` for M up to `next_tick - 1`, then `clear_rollback_point()`. Counted for the overlay. | Asserts depth ≤ `MAX_ROLLBACK`. `can_advance` guarantees that, so a deeper rollback means a bug. |
 | 4. Simulate | Run every tick that's due (see below). | |
-| 5. Send | `send_packet`, then `netsim_update` again. | **Every frame**, even while stalled or waiting for the peer (see `networking.md`). |
-| 6. Render | Game, then overlay. | Reads the state only. |
+| 5. Send | `session_send`, then `netsim_update` again. | **Every frame**, even while stalled or waiting for the peer (see `networking.md`). |
+| 6. Render | `render_game`, then fill an `OverlayInfo` and `render_overlay`. | Reads the state only. |
 | 7. Wait | Sleep until the next tick is due, then poll input again. | |
 
 ## `process_tick(tick, state, next_state)`
@@ -60,6 +64,7 @@ while (total_time >= next_tick * STEP - TICK_THRESHOLD
     process_tick(next_tick, ...);
     next_tick++;
     desync_check(next_tick);
+    sync_check_after_tick(next_tick);
 }
 ```
 
@@ -97,7 +102,7 @@ runs a tick once both players' inputs for it are confirmed.
 
 Rollback promises that once the inputs for a tick are known, its saved state
 for that tick is exactly what you'd get by simulating the real inputs from the
-start. `desync_check(next_tick)` checks that promise: for every tick T that is
+start. `desync_check(next_tick)` (`src/rollback/desync_check.c`) checks that promise: for every tick T that is
 both confirmed (`T <= last_confirmed_remote_tick`) and already simulated
 (`T < next_tick`), it compares the saved snapshot for T with `reference_state`
 using `memcmp`, then steps the reference forward with the confirmed inputs.
@@ -110,12 +115,15 @@ Any difference logs `DESYNC at tick T` and asserts.
   redone) and non-determinism in the sim that depends on history (state kept
   outside `GameState`, uninitialized padding).
 - It **can't** catch the two machines computing different results from the
-  same inputs (different compilers, floats). That needs the hash exchange
-  between peers (MVP plan step 7).
+  same inputs (different compilers, floats). The hash exchange between peers
+  does that: `sync_check_after_tick` runs right after it, under the same
+  timing rule (see "Sync check" in `networking.md`).
 
 ## Overlay and stats
 
 Stats are counted in `main.c` because that's where rollbacks and stalls
 happen: `stats_note_rollback(depth)` in the rollback block,
 `stats_current.stalled_frames++` at the stall `break`. See `networking.md` for
-what each overlay line means.
+what each overlay line means. `main.c` copies the stats and everything else
+the overlay shows into an `OverlayInfo` each frame, so `render.c` only draws
+and never reads the network or rollback modules itself.

@@ -154,18 +154,12 @@ returned untouched.
 
 ## Desync checking
 
-**Done (local check):** `main.c` keeps a second copy of the game that only
+**Local check** (`desync_check.c`): keeps a second copy of the game that only
 advances once both inputs for a tick are confirmed, and compares it byte for
 byte with the rollback side's saved snapshot. See `main_loop.md`.
 
-**Planned (between machines, MVP plan step 7).** Not part of the rings. It
-splits across three places:
-
-1. `sim_hash(const GameState *)` in the sim module (e.g. FNV-1a over the raw
-   bytes). This is safe because padding is kept zeroed by `memset`/`memcpy`.
-   Also used by the local sync test.
-2. The rollback side knows when a state is **final** (all inputs up to that
-   tick confirmed). Only final states can be compared, and they must be hashed
-   before their slot is reused.
-3. The network layer sends `(tick, hash)` every N ticks, keeps whichever side
-   arrives first until the other shows up, and logs mismatches.
+**Between machines** (`sync_check.c`): hashes each snapshot with FNV-1a once
+it's final (all inputs before it confirmed), before its slot in the state ring
+is reused. `session.c` sends the newest hash in every packet and hands
+received ones back, and the overlay shows a mismatch. See "Sync check" in
+`networking.md`.

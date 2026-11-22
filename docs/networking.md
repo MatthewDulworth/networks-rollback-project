@@ -8,8 +8,8 @@ cumulative acks), read `rollback_overview.md` first.
 ## Layers
 
 ```
-main.c          receive_packets / send_packet: packets <-> rollback module
-                ping (RTT) from acks, overlay, disconnect timeout
+session.c       session_receive / session_send: packets <-> rollback module
+                and sync check, ping (RTT) from acks, disconnect timeout
    |
 packet.c        InputPacket struct <-> bytes on the wire
    |
@@ -88,19 +88,22 @@ One packet type, sent once per frame in each direction:
 - `tests/packet_test.c` checks round trips and rejection of bad packets. Run
   it with `ctest --test-dir build`.
 
-## Packets ↔ rollback (`main.c`)
+## Packets ↔ rollback (`src/net/session.c`)
 
-**`receive_packets(now)`** reads every waiting packet each frame:
+**`session_receive(now)`** reads every waiting packet each frame:
 
 1. Decode it. Drop it with a warning if it's malformed.
 2. `receive_ack(packet.ack)`: the peer has our inputs up to that tick.
 3. `add_remote_input` for every input in it. Most are duplicates (each packet
    repeats everything unacked), and the rollback module ignores those and
    anything past a gap, so no filtering is needed here.
+4. `sync_check_add_remote(hash_tick, hash)`. `sender_tick` is read but not
+   used yet (it's for frame advantage sync, MVP plan step 8).
 
-**`send_packet(now)`** sends once per frame, **even when no tick advanced**:
+**`session_send(now, next_tick)`** sends once per frame, **even when no tick advanced**:
 
 - `ack = get_last_confirmed_remote_tick()`.
+- `sender_tick = next_tick`, and our newest confirmed-state hash.
 - Inputs = every local input the peer hasn't acked (`find_inputs_to_resend`).
   If that's more than 32, keep the oldest: the peer needs them in order.
 - Sending while stalled matters. After a lost packet, this resend is the only
@@ -113,7 +116,7 @@ One packet type, sent once per frame in each direction:
 
 Makes a good network behave like a bad one, for testing and the demo.
 
-- **Where it sits:** `main.c` calls `netsim_send`/`netsim_receive`, which call
+- **Where it sits:** `session.c` calls `netsim_send`/`netsim_receive`, which call
   `net_send`/`net_receive`. With all settings at 0 it's a pass-through.
 - **Both directions:** packets we send wait before going out, and packets we
   receive are read off the socket right away but wait before the game sees
@@ -133,7 +136,7 @@ Makes a good network behave like a bad one, for testing and the demo.
 - **`netsim_update(now)`** moves packets along: it reads everything from the
   socket into the incoming queue, and sends outgoing packets whose time has
   come. `main.c` calls it at the start of the frame (before receiving) and
-  right after `send_packet` (so packets with no delay go out immediately).
+  right after `session_send` (so packets with no delay go out immediately).
 - **Precision:** packets are only released when the loop checks, about every
   16 ms, so delays are rounded up to the frame. Fine at demo-level lag.
 - **Random numbers:** a private xorshift32 generator, not `rand()`. The sim
@@ -187,7 +190,7 @@ depth climb. Once depth is regularly 8, stalls start.
 
 ## Sync check (`src/rollback/sync_check.c`)
 
-The local desync check (in `main.c`) only proves that rollback matches a
+The local desync check (`src/rollback/desync_check.c`) only proves that rollback matches a
 replay on the **same** machine. The sync check proves the **two** machines
 agree with each other.
 
@@ -195,7 +198,7 @@ agree with each other.
   every input before it is confirmed (`t - 1 <= last_confirmed_remote_tick`)
   and it has been saved (`t < next_tick`). It can never be rolled back after
   that, so both machines must have the exact same bytes for it.
-  `hash_confirmed_states` hashes each snapshot once it becomes final. It runs
+  `sync_check_after_tick` hashes each snapshot once it becomes final. It runs
   after every tick, like the desync check, so any rollback for this frame's
   inputs has already happened and the snapshot is still in the state ring.
 - **Hash.** FNV-1a over the raw bytes of `GameState`: XOR in each byte, then

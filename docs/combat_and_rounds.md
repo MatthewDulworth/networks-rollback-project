@@ -5,7 +5,7 @@ Movement, collision and units are in `sim_physics_rendering.md`. The full
 design (including things not built yet) is in `game_description.md`.
 
 Everything here follows the determinism rules: integers only, no `rand()`,
-fixed order, all state in `GameState`. The desync check in `main.c` would
+fixed order, all state in `GameState`. The desync check (`src/rollback/desync_check.c`) would
 assert on any mistake.
 
 ## Order within one tick (`sim()`)
@@ -113,7 +113,7 @@ already in startup still comes out.
 - **Match over:** after the long pause, kills go back to 0 and a new match
   starts.
 
-## HUD (`render()` in `main.c`)
+## HUD (`render_game()` in `src/render/render.c`)
 
 - Bullets in their owner's color.
 - Player flickers while in hitstun.
