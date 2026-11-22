@@ -8,7 +8,7 @@
 #include "rollback/sync_check.h"
 #include "net/net.h"
 #include "net/netsim.h"
-#include "net/packet.h"
+#include "net/session.h"
 
 #define STEP (1.0 / 60.0)
 #define CATCHUP_MARGIN (0.004)
@@ -87,125 +87,6 @@ static bool parse_args(int argc, char **argv, Args *args) {
         return false;
     }
     return true;
-}
-
-// --------------------------------------------------------
-// Network glue: rollback module <-> packets <-> net module
-// --------------------------------------------------------
-
-// --------------------------------------------------------
-// Round-trip time, measured from acks
-// --------------------------------------------------------
-// When a local input goes out for the first time, remember when. When the
-// peer's ack first covers that tick, the time since then is one round trip.
-//
-// This measures more than the pure network delay: the peer only acks when it
-// next sends (end of its frame), and we only read the ack at the start of our
-// next frame, so up to a frame on each side is included. A lost packet also
-// shows up as a spike, because the ack waits for the resend. That's fine for
-// an overlay: it's the delay the game actually experiences.
-
-// Must cover every unacked tick, and the rollback input ring is 32 slots, so
-// 64 is plenty. Power of 2 so the slot is a mask, as in rollback.c.
-#define SEND_TIME_RING 64
-
-typedef struct {
-    Tick tick;
-    double time;
-} SendTime;
-
-static SendTime send_times[SEND_TIME_RING];
-static Tick newest_timed_tick = NO_TICK;  // Newest tick with a send time.
-static Tick newest_rtt_ack = NO_TICK;     // Newest ack already measured.
-static double rtt_ms = -1;                // Smoothed; -1 until first sample.
-
-static SendTime *send_time_slot(Tick tick) {
-    return &send_times[(uint32_t)tick & (SEND_TIME_RING - 1)];
-}
-
-// Called for every tick in an outgoing packet. Only the first send counts.
-static void note_sent(Tick tick, double now) {
-    if (tick > newest_timed_tick) {
-        SendTime *slot = send_time_slot(tick);
-        slot->tick = tick;
-        slot->time = now;
-        newest_timed_tick = tick;
-    }
-}
-
-static void note_ack(Tick ack, double now) {
-    if (ack <= newest_rtt_ack) {
-        return;  // old or duplicate ack: already measured
-    }
-    newest_rtt_ack = ack;
-
-    SendTime *slot = send_time_slot(ack);
-    if (slot->tick != ack) {
-        return;  // a prefilled tick we never sent, or an overwritten slot
-    }
-    double sample = (now - slot->time) * 1000.0;
-    // Exponential moving average: each sample moves the estimate 10% of the
-    // way. Smooths jitter so the number on screen is readable.
-    rtt_ms = rtt_ms < 0 ? sample : rtt_ms * 0.9 + sample * 0.1;
-}
-
-// Drain every waiting packet into the rollback module. Returns true if at
-// least one valid packet arrived.
-static bool receive_packets(double now) {
-    uint8_t buf[PACKET_MAX_SIZE];
-    bool got_any = false;
-    int len;
-
-    while ((len = netsim_receive(buf, sizeof buf)) > 0) {
-        InputPacket packet;
-        if (!packet_decode(buf, (size_t)len, &packet)) {
-            TraceLog(LOG_WARNING, "net: dropped malformed packet (%d bytes)", len);
-            continue;
-        }
-        got_any = true;
-
-        receive_ack(packet.ack);
-        note_ack(packet.ack, now);
-        sync_check_add_remote(packet.hash_tick, packet.hash);
-        // packet.sender_tick is unused for now: it's for frame advantage
-        // sync (mvp_plan.md step 8).
-        // Every packet repeats all inputs the peer hasn't seen acked, so
-        // most of these are duplicates. add_remote_input ignores those (and
-        // anything past a gap), so no filtering is needed here.
-        for (int i = 0; i < packet.count; i++) {
-            add_remote_input(packet.first_tick + i, packet.inputs[i]);
-        }
-    }
-    return got_any;
-}
-
-// Send our ack and every local input the peer hasn't acked. Called once per
-// frame, even when nothing advanced: after a lost packet this resend is the
-// only way the peer ever gets those inputs.
-static void send_packet(double now, Tick next_tick) {
-    InputPacket packet;
-    packet.ack = get_last_confirmed_remote_tick();
-    packet.sender_tick = next_tick;
-    // Only the newest hash. One per packet is enough: packets go out about
-    // once per tick, and a hash that's lost just means that tick isn't
-    // compared.
-    sync_check_newest_local(&packet.hash_tick, &packet.hash);
-    find_inputs_to_resend(&packet.first_tick, &packet.count);
-
-    // Keep the oldest inputs if there are too many: the peer needs them in
-    // order, and the rest go out once these are acked.
-    if (packet.count > PACKET_MAX_INPUTS) {
-        packet.count = PACKET_MAX_INPUTS;
-    }
-    for (int i = 0; i < packet.count; i++) {
-        packet.inputs[i] = get_local_input(packet.first_tick + i);
-        note_sent(packet.first_tick + i, now);
-    }
-
-    uint8_t buf[PACKET_MAX_SIZE];
-    size_t len = packet_encode(&packet, buf, sizeof buf);
-    assert(len > 0);  // count is clamped and buf is max size, so can't fail
-    netsim_send(buf, len);
 }
 
 // --------------------------------------------------------
@@ -438,13 +319,10 @@ static void handle_netsim_hotkeys(void) {
 // Overlay
 // --------------------------------------------------------
 
-// No packet for this long means the peer is probably gone (closed the game,
-// lost Wi-Fi). Long enough that a short Wi-Fi hiccup doesn't trigger it.
-#define DISCONNECT_TIMEOUT 3.0
-
 static void render_overlay(const char *local_addr, const char *peer_addr,
                            bool peer_seen, bool disconnected) {
     int y = 10;
+    double rtt_ms = session_rtt_ms();
     if (rtt_ms >= 0) {
         DrawText(TextFormat("ping %d ms", (int)(rtt_ms + 0.5)), 10, y, 20, DARKGRAY);
     } else {
@@ -554,14 +432,14 @@ int main(int argc, char **argv) {
     rollback_init(args.player);
     desync_check_init(&state);
     sync_check_init();
+    session_init();
 
     // Stand-in for the start handshake (see follow_ups.md, "Shared start
     // time"): don't start ticking until the first packet from the peer
     // arrives. Both sides send every frame, so each starts within about one
     // one-way trip of the other. Tick times are measured from start_time.
-    bool peer_seen = false;
+    bool started = false;
     double start_time = 0;
-    double last_packet_time = 0;
 
     Input local_input = 0;
 
@@ -597,21 +475,15 @@ int main(int argc, char **argv) {
         // netsim first: it reads the socket and releases packets whose
         // simulated delay is over.
         netsim_update(frame_start);
-        if (receive_packets(frame_start)) {
-            last_packet_time = frame_start;
-            if (!peer_seen) {
-                peer_seen = true;
-                start_time = frame_start;
-                TraceLog(LOG_INFO, "net: peer connected, starting match");
-            }
+        session_receive(frame_start);
+        if (!started && session_peer_seen()) {
+            started = true;
+            start_time = frame_start;
+            TraceLog(LOG_INFO, "net: peer connected, starting match");
         }
-        // Display only: if packets start arriving again, the game just
-        // carries on (stalled at the rollback limit until then).
-        bool disconnected = peer_seen
-            && frame_start - last_packet_time > DISCONNECT_TIMEOUT;
         stats_update(frame_start);
 
-        if (peer_seen) {
+        if (started) {
             // Seconds since the match started on this machine.
             double total_time = frame_start - start_time;
 
@@ -678,7 +550,7 @@ int main(int argc, char **argv) {
         // -------------------------------------------
         // Every frame, including while waiting for the peer (an empty packet
         // is what lets the peer see us) and while stalled.
-        send_packet(GetTime(), next_tick);
+        session_send(GetTime(), next_tick);
         // Pushes out the packet just queued if it has no simulated delay,
         // instead of it waiting until next frame.
         netsim_update(GetTime());
@@ -690,13 +562,13 @@ int main(int argc, char **argv) {
         ClearBackground(RAYWHITE);
 
         render(&state);
-        render_overlay(local_addr, peer_addr, peer_seen, disconnected);
+        render_overlay(local_addr, peer_addr, started, session_disconnected(frame_start));
 
         EndDrawing();
 
         // Before the match starts there are no ticks to line up with, so
         // just wait one step between frames.
-        double time_til_next_tick = peer_seen
+        double time_til_next_tick = started
             ? MAX(0, next_tick * STEP - (GetTime() - start_time))
             : STEP;
         WaitTime(time_til_next_tick);
