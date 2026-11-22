@@ -44,8 +44,42 @@ mirrored ports and opposite players:
 `scripts/run_local.sh` does exactly that, prefixes each peer's output with
 `[p1]`/`[p2]`, and stops both when either window closes. Pass a different base
 port if 5000/5001 are taken: `scripts/run_local.sh 6000`. Only the focused
-window receives keys (WASD + Space), so click the window you want to control.
-Across two machines, use each other's LAN IP instead of `127.0.0.1`.
+window receives keys, so click the window you want to control.
+
+### Two machines
+
+Use each other's LAN IP instead of `127.0.0.1`. Ports can be the same, players
+must be opposite:
+
+```sh
+./build/game 5000 <other_ip> 5000 0     # machine A
+./build/game 5000 <other_ip> 5000 1     # machine B
+```
+
+The overlay shows each machine's own IP (the "me" line). Accept the macOS
+"allow incoming connections" prompt on both. See `docs/networking.md`.
+
+### Simulating a bad network
+
+Add `--lag <ms>`, `--jitter <ms>` and/or `--loss <pct>` after the four
+arguments, on one machine only (it affects both directions):
+
+```sh
+./build/game 5000 127.0.0.1 5001 0 --lag 100 --jitter 20 --loss 10
+```
+
+Or change them live in the focused window: 1/2 lag, 3/4 jitter, 5/6 loss,
+0 reset. `scripts/run_local.sh` doesn't pass flags through, so use the keys
+there.
+
+### Controls
+
+| Action | Keys |
+|---|---|
+| Move | A / D |
+| Jump | Space |
+| Aim | Arrow keys (falls back to WASD, then facing) |
+| Shoot | J or Right Shift |
 
 Run the tests with `ctest --test-dir build --output-on-failure`.
 
@@ -116,14 +150,14 @@ anything that links to it".
 ### Adding another program
 
 ```cmake
-add_executable(netsim tools/netsim/netsim.c)
-target_compile_options(netsim PRIVATE -Wall -Wextra)
+add_executable(replay tools/replay/replay.c)
+target_compile_options(replay PRIVATE -Wall -Wextra)
 ```
 
-It builds to `./build/netsim`. To build just one target:
+It builds to `./build/replay`. To build just one target:
 
 ```sh
-cmake --build build --target netsim
+cmake --build build --target replay
 ```
 
 ## Updating tools
@@ -156,16 +190,8 @@ writes on every configure. If `#include` errors come back:
 
 ## Git
 
-The project isn't a git repository yet. To start one:
-
-```sh
-git init
-git add .
-git commit -m "Initial project setup"
-```
-
-`.gitignore` already excludes `build/` and `.DS_Store`. Never commit `build/`:
-it's machine-specific and always regenerated.
+`.gitignore` excludes `build/` and `.DS_Store`. Never commit `build/`: it's
+machine-specific and always regenerated.
 
 ## Troubleshooting
 

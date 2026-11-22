@@ -187,6 +187,10 @@ triggering in normal play.
 
 ## Starting the match
 
+**Current version (a stand-in):** each peer starts ticking when the first
+packet from the other one arrives. Both send every frame, so they start within
+about one one-way trip of each other. The plan below is a nice-to-have.
+
 1. The peers exchange packets to confirm the connection works in both
    directions and to measure round-trip time.
 2. The two sides agree on which player each one is (player 0 and player 1),
@@ -214,9 +218,13 @@ it only re-simulates. It never sends real state. So we detect it:
 - If the hashes for the same tick differ, log it loudly. That's a bug in the
   sim, not a network problem.
 
-A **local sync test** catches most determinism bugs without a network. Every
-tick, roll back some ticks and re-simulate, then check that you end up with the
-same hash as before the rollback.
+A **local check** catches most determinism bugs without a second machine.
+This project keeps a second copy of the game that never guesses: it only runs
+a tick once both inputs are confirmed. Rollback promises that once the inputs
+are known, its saved state for a tick is exactly what you'd get by simulating
+the real inputs from the start, so the two are compared byte for byte (see
+`main_loop.md`). Another common approach (GGPO's "sync test") is to roll back
+a few ticks every tick and check the re-simulated state matches.
 
 ## A short example
 
@@ -234,14 +242,17 @@ latency minus input delay (6 − 3). The shot's short startup is what makes this
 acceptable: a correction during startup is much less noticeable than a bullet
 suddenly appearing mid-flight.
 
-## Where each piece will live
+## Where each piece lives
 
-| Concern | Module |
+| Concern | Where |
 |---|---|
-| Deterministic game step, state hash | `sim` |
-| Input/state history, prediction, misprediction tracking, stall check | `rollback` |
-| Sockets, packet format, acks on the wire, ping/RTT, sync messages | `net` |
-| Tick timing, the order of the steps above, time-sync slowdown | `main` loop |
+| Deterministic game step | `src/sim/` |
+| Input/state history, prediction, misprediction tracking, stall check | `src/rollback/` |
+| Socket (`net.c`), wire format (`packet.c`), network simulator (`netsim.c`) | `src/net/` |
+| Tick timing, the order of the steps above, packets ↔ rollback glue, ping, desync check, overlay | `src/main.c` |
+
+Details: `rollback.md`, `networking.md`, `main_loop.md`,
+`sim_physics_rendering.md`, `combat_and_rounds.md`.
 
 ## References
 

@@ -1,14 +1,20 @@
 # Rollback buffers
 
 Notes on the input and state ring buffers in `src/rollback/`: what they hold,
-the design decisions behind them, what's implemented, and what's still open.
+the design decisions behind them, and what each function does. For the
+concepts behind rollback, read `rollback_overview.md` first. For how the main
+loop uses this module, see `main_loop.md`.
 
 ## Where things live
 
 | File | Contains |
 |---|---|
-| `src/rollback/rollback.h` | `MAX_ROLLBACK`, `INPUT_DELAY`, `NO_TICK`, ring sizes, `InputSlot`/`StateSlot`, `extern` buffers and trackers, the public API. |
-| `src/rollback/rollback.c` | Definitions of the buffers and trackers, `static local_player`, `static ring_index()`, and the function bodies. |
+| `src/rollback/rollback.h` | `MAX_ROLLBACK` (8), `INPUT_DELAY` (3), `NO_TICK` (-1), and the public functions. |
+| `src/rollback/rollback.c` | Ring sizes, `InputSlot`/`StateSlot`, the buffers and trackers (all `static`), `ring_index()`, and the function bodies. |
+
+Everything except the API is `static`, so other files can only change the
+buffers through the functions. That keeps the invariants (ticks written in
+order, acks only moving forward) in one place.
 
 `CMakeLists.txt` adds `src/` as an include directory, so includes are written
 from there: `"sim/sim.h"`, `"rollback/rollback.h"`.
@@ -22,15 +28,27 @@ real gain. (GGPO also keeps them separate.)
 
 | | Input ring | State ring |
 |---|---|---|
-| Slot | `tick`, `input[MAX_PLAYERS]`, `confirmed[MAX_PLAYERS]` | `tick`, `GameState` |
-| Size | 16, must be ≥ `MAX_ROLLBACK + INPUT_DELAY + 1` | 16, must be ≥ `MAX_ROLLBACK + 1` |
-| Holds future ticks? | Yes, because of input delay | No |
+| Slot | `tick`, `input[MAX_PLAYERS]`, `confirmed[MAX_PLAYERS]`, `remote_predicted` | `tick`, `GameState` |
+| Size | 32, must be ≥ `2 * (MAX_ROLLBACK + INPUT_DELAY) + 1` | 16, must be ≥ `MAX_ROLLBACK + 1` |
+| Holds future ticks? | Yes, because of input delay and a peer running ahead | No |
 
-The input ring spans from the oldest tick we might roll back to
-(`next_tick - MAX_ROLLBACK`) to the newest delayed local input
-(`next_tick + INPUT_DELAY`). The resend window stays inside that because of the
-stall rule: acks come with the peer's inputs, so if we're getting their inputs
-we're getting acks, and if we aren't we stall.
+The input ring has to hold two windows at once:
+
+- **Rollback:** from the oldest tick we might roll back to
+  (`next_tick - MAX_ROLLBACK`) up to the newest delayed local input
+  (`next_tick + INPUT_DELAY`).
+- **The peer running ahead:** its inputs can arrive for ticks up to about
+  `MAX_ROLLBACK + INPUT_DELAY` past our own newest tick, and our unacked local
+  inputs (still needed for resending) stretch back about as far.
+
+Both come to roughly `2 * (MAX_ROLLBACK + INPUT_DELAY)` live ticks, so 32
+slots. The resend window stays inside that because of the stall rule: acks
+come with the peer's inputs, so if we're getting their inputs we're getting
+acks, and if we aren't we stall.
+
+`remote_predicted` is set when the sim runs a tick on a guessed remote input.
+Only those ticks can be mispredicted. An unsimulated slot just holds a
+placeholder 0, which means nothing.
 
 ## Ring indexing
 
@@ -104,34 +122,44 @@ should see themselves on the left, mirror the view in rendering.
 - `assert` disappears in `Release` builds (`NDEBUG`). The project defaults to
   `Debug`.
 
-## Still to implement
+## The functions
 
-| Function | Notes |
+| Function | What it does |
 |---|---|
-| `get_inputs(tick, out)` | Predicts the remote input if it isn't confirmed, and **writes the prediction back** into the slot so a later comparison uses what the sim actually used. Predict again during re-simulation, because a corrected input changes later predictions. |
-| `predict_input` | `static` helper: repeat the last confirmed remote input. |
-| `write_local_input(tick, input)` | Writes into `input[local_player]`, confirmed. Called with `next_tick + INPUT_DELAY`. |
-| `add_remote_input(tick, input)` | Only accepts `last_confirmed_remote_tick + 1`. Ignore duplicates and anything past a gap (it gets resent). Stores it, confirms it, advances the tracker, and sets `earliest_misprediction` if it differs from the stored prediction. |
-| `receive_ack(acked_tick)` | Ignores acks older than the current one (out-of-order packets). |
-| `can_advance(next_tick)` | False when `next_tick - last_confirmed_remote_tick > MAX_ROLLBACK`. |
-| `find_rollback_point` / `clear_rollback_point` | Returns `earliest_misprediction` or `NO_TICK`; cleared after re-simulating. |
-| `find_inputs_to_resend(&first, &count)` | From `last_acked_local_tick + 1` to the newest local input written. |
+| `get_inputs(tick, out)` | Returns both inputs for a tick. If the remote one isn't confirmed, it predicts it (repeats the last confirmed remote input), **writes the prediction back** into the slot and sets `remote_predicted`, so a later comparison uses what the sim actually used. During re-simulation it predicts again, because a corrected input changes later predictions. |
+| `write_local_input(tick, input)` | Stores our input, confirmed. Called with `next_tick + INPUT_DELAY`. Asserts ticks come in order with no gaps and are never rewritten, because once an input has been sent it can't change. |
+| `add_remote_input(tick, input)` | Only accepts `last_confirmed_remote_tick + 1`. Duplicates and anything past a gap are ignored (it gets resent). Stores it, confirms it, advances the tracker, and sets `earliest_misprediction` if the tick was simulated on a guess that differs. |
+| `receive_ack(acked_tick)` | Moves `last_acked_local_tick` forward. Older acks (out-of-order packets) are ignored. |
+| `can_advance(next_tick)` | False when `next_tick - last_confirmed_remote_tick > MAX_ROLLBACK`. This is the stall rule. |
+| `find_rollback_point` / `clear_rollback_point` | Returns `earliest_misprediction` or `NO_TICK`. Cleared after re-simulating. |
+| `find_inputs_to_resend(&first, &count)` | From `last_acked_local_tick + 1` to the newest local input written. Asserts the range fits in the ring, because older inputs would already be overwritten. |
+| `get_local_input(tick)` | Our input for a tick still in the ring, used to fill outgoing packets. |
+| `get_last_confirmed_remote_tick()` | The ack we send back. |
 
-## Open decisions
+`claim_slot(tick)` is the private helper behind both writers. If the slot still
+holds an older tick, it's wiped and taken over. If it already holds this tick
+(local and remote inputs for the same tick can arrive in either order), it's
+returned untouched.
 
-- **Saved-state tick convention.** Is the state saved for tick N the state
-  before tick N is simulated, or after? This decides whether `save_state` can
-  assert `state->tick == tick`, where the tick 0 state gets saved, and the
-  bounds of the rollback loop.
-- **Where the rollback loop lives.** Load the state at the rollback point, then
-  for each tick up to the present: get inputs, `sim()`, **save the new state**.
-  Either `rollback.c` calls `sim()` itself, or `main.c` runs the loop and the
-  module only stores data.
-- **How `local_player` is chosen.** Command-line flag, or "host is player 0".
+## Decisions made
 
-## Desync checking (later)
+- **Saved-state tick convention:** the state saved for tick N is the state
+  **before** tick N runs (so `state->tick == N`, and `save_state` asserts it).
+  `process_tick` in `main.c` saves, gets inputs, then steps the sim.
+- **Where the rollback loop lives:** in `main.c`. This module only stores data
+  and answers questions. It never calls `sim()`. That keeps it testable on its
+  own and keeps the order of operations visible in one place.
+- **How `local_player` is chosen:** the fourth command-line argument (0 or 1).
+  The two peers must use opposite values.
 
-Not part of the rings. It splits across three places:
+## Desync checking
+
+**Done (local check):** `main.c` keeps a second copy of the game that only
+advances once both inputs for a tick are confirmed, and compares it byte for
+byte with the rollback side's saved snapshot. See `main_loop.md`.
+
+**Planned (between machines, MVP plan step 7).** Not part of the rings. It
+splits across three places:
 
 1. `sim_hash(const GameState *)` in the sim module (e.g. FNV-1a over the raw
    bytes). This is safe because padding is kept zeroed by `memset`/`memcpy`.

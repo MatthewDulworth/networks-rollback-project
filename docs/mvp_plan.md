@@ -22,7 +22,9 @@ localhost.
 - The network simulator applies to both directions on the machine where it's
   turned on, so one laptop controls the whole link during the demo.
 
-## Phase 1: Show the netcode working
+## Phase 1: Show the netcode working (done)
+
+Explained in `networking.md`.
 
 **1. Network condition simulator** (`src/net/netsim.c`)
 - Sits between the game and `net_send`/`net_receive`. Packets wait in a fixed
@@ -44,7 +46,10 @@ localhost.
 - No packet for ~3 seconds shows "Peer disconnected" instead of freezing at the
   rollback limit.
 
-## Phase 2: Give it a game
+## Phase 2: Give it a game (done)
+
+Explained in `combat_and_rounds.md`. Controls: arrows aim, J or Right Shift
+shoots.
 
 All sim changes use integer math only, so the existing desync check catches any
 determinism mistake immediately.

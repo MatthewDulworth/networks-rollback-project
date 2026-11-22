@@ -1,14 +1,15 @@
 # Sim, physics and rendering
 
-Notes on the first playable version of the simulation: player movement,
-floor collision, rendering, and calling the sim from the main loop.
+Notes on the simulation's foundations: units, player movement, collision,
+the map and rendering. Shooting, bullets, health and rounds are in
+`combat_and_rounds.md`. The main loop is in `main_loop.md`.
 
 ## Where things live
 
 | File | Contains |
 |---|---|
-| `src/sim/sim.h` | The public contract: units and sizes, `IntVector2`, `Collision`, `Input` bits, `extern MapCollision`, `GameState` and its structs, `sim_init()`, `sim()`. |
-| `src/sim/sim.c` | Everything private: tuning constants, the `MapCollision` definition, floor constants, `static` helpers, and the two public functions. |
+| `src/sim/sim.h` | The public contract: units and sizes, rules the HUD needs (`MAX_HEALTH`, `MAGAZINE_SIZE`, ...), `IntVector2`, `Collision`, `Input` bits, `extern MapCollision`, `GameState` and its structs, `sim_init()`, `sim()`, `sim_match_winner()`. |
+| `src/sim/sim.c` | Everything private: tuning constants, the map, `static` helpers, and the public functions. |
 | `src/main.c` | Window, input sampling, fixed-timestep loop, `render()`. |
 
 The rule: **the header holds only what another file needs** to create, step,
@@ -35,8 +36,11 @@ draw or send a `GameState`. If changing something should never force an edit in
   can't express 0.25 px/tick²), so we scale.
 - Division only happens in rendering (`to_px()`), which uses float. That's safe
   because rendering never feeds back into the sim.
-- C integer `/` rounds toward zero (`-1/256 == 0`). It's deterministic, but
-  asymmetric left vs right, so avoid it in the sim.
+- C integer `/` rounds toward zero (`-1/256 == 0`). It's deterministic. On
+  **velocities** it's symmetric (+17/16 and −17/16 both become ±1), so the
+  combat code uses it for knockback and decay. On **positions** it's
+  asymmetric around 0 (x = −100 and x = +100 subpixels both become pixel 0),
+  so don't divide positions in the sim.
 
 ### Current tuning (`sim.c`)
 
@@ -47,20 +51,43 @@ draw or send a `GameState`. If changing something should never force an edit in
 | `JUMP_VELOCITY` | -1792 | 7 px/tick up |
 | `MAX_SPEED` | 3072 | 12 px/tick per axis |
 | Player size | 2560 × 2560 | 10 × 10 px |
-| Floor | full width, 20 px tall | top at y = 430 px |
+
+Combat tuning is in `combat_and_rounds.md`.
 
 Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**.
+
+## The map
+
+Window and map are 800 × 450 px. `MapCollision` holds four solid boxes:
+
+| Box | Position (px) | Size (px) |
+|---|---|---|
+| Floor | x 100, y 430 | 600 × 20 |
+| Left platform | x 30, y 350 | 170 × 10 |
+| Right platform | x 600, y 350 | 170 × 10 |
+| Middle platform | x 320, y 270 | 160 × 10 |
+
+- The floor stops 100 px short of each side. Falling into a gap takes you off
+  the map, which kills you.
+- The side platforms hang over the gaps, so you can jump across them.
+- Platforms are 80 px apart vertically, within the 98 px jump.
+- All boxes are solid from every side, so you bump your head jumping up into
+  one from below. One-way platforms would need extra logic in `move_y`.
+- `MapBounds` (the whole 800 × 450 area) is separate. Anything not touching
+  it is "outside the map".
 
 ## One tick (`sim()`)
 
 1. `memcpy(next, prev)`, then `next->tick += 1`. Read "before" values from
    `prev`, write to `next`. `restrict` means they must not overlap.
 2. For each player **in fixed order (P1 then P2)**: `update_player()`.
-3. Store this tick's input in `previous_input`.
+3. Bullets, deaths and round logic (see `combat_and_rounds.md`).
+4. Store this tick's input in `previous_input`.
 
 `update_player()`:
 
-1. **Input → intent**, skipped while `hitstun_left > 0` so knockback survives.
+1. **Input → intent**, skipped while `hitstun_left > 0` so knockback survives
+   (hitstun counts down and the knockback slows instead).
    - Horizontal velocity is *set* to `dir * MOVE_SPEED`. There's no
      acceleration or friction yet.
    - `facing_right` follows the last move direction.
@@ -71,6 +98,7 @@ Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**.
    also keeps fall speed (12 px) below floor thickness (20 px), so no
    tunneling.
 4. **`move_x()` then `move_y()`**: separate-axis collision.
+5. **`update_gun()`** (see `combat_and_rounds.md`).
 
 ## Collision: separate-axis resolution
 
@@ -94,33 +122,33 @@ Known limits:
 - With several overlapping boxes, snapping out of one can push the player
   into another. That's fine for simple axis-aligned maps, but watch for it as
   the map grows.
-- Fast small things (bullets) can tunnel. The plan is to substep them (move in
-  N small steps per tick, check each one).
+- Fast small things can tunnel (jump past a thin wall in one step). Bullets
+  are slow and big enough that they can't yet (see `combat_and_rounds.md`). A
+  faster bullet would need substepping: move in N small steps per tick and
+  check each one.
 
 ## Setup and the main loop (`main.c`)
 
 - `sim_init(&state)` builds tick 0: `memset` to zero (padding included, so the
-  state can be hashed later), players on the floor at ¼ and ¾ map width,
-  facing each other. It lives in the sim because both peers must produce
-  byte-identical starting states.
-- Each tick in the catch-up loop:
-  `sim(input, &state, &next_state); memcpy(&state, &next_state, ...)`.
-  - It uses `memcpy` instead of `state = next_state`, because C doesn't
-    guarantee that struct assignment copies padding bytes.
-  - Rollback will replace this with a ring buffer of saved states.
-- Catch-up ticks in one frame all get the same input sample. Press detection
-  still works: only the first of those ticks sees a press edge, since
-  `previous_input` updates every tick.
-- The old diagnostics (delta/tick text, ticks-per-frame `printf`) were removed.
+  state can be compared byte for byte), then `reset_round` puts the players
+  on the floor at ¼ and ¾ map width, facing each other, with full health and
+  ammo. It lives in the sim because both peers must produce byte-identical
+  starting states.
+- The main loop steps it through `process_tick` (see `main_loop.md`).
+  It uses `memcpy` instead of `state = next_state`, because C doesn't
+  guarantee that struct assignment copies padding bytes.
 
 ### Controls
 
-| | Left | Right | Up | Down | Jump |
-|---|---|---|---|---|---|
-| P1 | A | D | W | S | Space |
-| P2 | L | ' | P | ; | , |
+Each machine controls one player, with the same keys on both:
 
-Up/down are sampled but not used by the sim yet.
+| Action | Keys |
+|---|---|
+| Move | A / D (W / S also count for aiming) |
+| Jump | Space |
+| Aim (8 directions) | Arrow keys |
+| Shoot | J or Right Shift |
+| Network simulator | 1/2 lag, 3/4 jitter, 5/6 loss, 0 reset (see `networking.md`) |
 
 ## Rendering (`render()` in `main.c`)
 
@@ -130,6 +158,8 @@ Up/down are sampled but not used by the sim yet.
   exactly what you collide with. Keep this as a debug view even after adding
   art.
 - Players: P1 blue, P2 red, with a small black mark on the facing side.
+- Bullets, health, ammo, score and round messages: see `combat_and_rounds.md`.
+- The debug overlay: see `networking.md`.
 - `DrawRectangleRec` with float `Rectangle`s, so subpixel positions aren't
   truncated to ints.
 - Interpolation or smoothing, if added later, belongs here, never in the sim.
@@ -145,11 +175,6 @@ Up/down are sampled but not used by the sim yet.
 
 ## Open items
 
-- `health` is 0 after `sim_init`. Set it to 3 once something reads it.
-- `hitstun_left` gates input but nothing counts it down yet.
-- On tick 1, `grounded` is still false (it becomes true after the first
-  gravity + push-out), so a jump pressed on the very first tick is ignored.
-  A pre-round countdown would hide this.
-- No acceleration/friction. `velocity.x += accel` with friction would let
-  knockback blend with input.
-- Not done yet: bullets, portals, death bounds, rounds.
+- No acceleration/friction. Horizontal velocity is set directly from input,
+  and knockback only blends in because input is ignored during hitstun.
+- Not done yet: portals.

@@ -1,6 +1,11 @@
 # Follow-ups
 
+Design notes on parts of the netcode. Each section says whether it's done.
+Open items are listed as nice-to-haves in `mvp_plan.md`.
+
 ## Main loop: catch-up after falling behind
+
+**Status: open.** The loop still uses the `CATCHUP_MARGIN` time budget.
 
 Right now, after a stall (breakpoint, window drag) the loop tries to run every missed tick, and the time budget (`CATCHUP_MARGIN`) never forgives the debt.
 
@@ -13,6 +18,8 @@ Refs: https://gafferongames.com/post/fix_your_timestep/, https://docs.rs/crate/g
 
 ## Shared start time (tick 0)
 
+**Status: open.** For now each peer starts when the first packet arrives (see `main_loop.md`). Frame-advantage sync is MVP plan step 8.
+
 Each peer's `GetTime()` is its own local clock, so "start at time T" first needs the clock offset. The NTP-style estimate assumes equal delay in both directions, and any asymmetry becomes error you can't measure.
 
 - Precision isn't needed: frame-advantage sync is needed anyway for drift, and it absorbs a startup error within about a second.
@@ -23,6 +30,8 @@ Each peer's `GetTime()` is its own local clock, so "start at time T" first needs
 
 ## Input: sample per frame, record per tick
 
+**Status: done**, including the input delay. The quick-tap question above is answered: `previous_input` is in `GameState`, so only the first of several catch-up ticks sees a press.
+
 Sample hardware once per frame, but record one input per tick. The sim only ever reads inputs from the buffer, never the keyboard, so rollback re-simulation replays exactly what was recorded.
 
 - Catch-up ticks in the same frame all get that frame's sample. Frames that run zero ticks just drop their sample.
@@ -30,6 +39,8 @@ Sample hardware once per frame, but record one input per tick. The sim only ever
 - Local input delay: write the sample to `next_tick + DELAY` instead of `next_tick`.
 
 ## Input history as a fixed ring buffer
+
+**Status: done** (32 input slots, 16 state slots; see `rollback.md`).
 
 Use a fixed ring buffer, not the heap. History is bounded by MAX_ROLLBACK (~8–10) + input delay + margin, so 64–128 slots is plenty. A full match log for replays or desync debugging is a separate thing (file).
 
@@ -39,6 +50,8 @@ Use a fixed ring buffer, not the heap. History is bounded by MAX_ROLLBACK (~8–
 - Saved `GameState` snapshots use the same ring idea with the same bound. They're bigger, so keep the window tight.
 
 ## Stalling at the rollback limit
+
+**Status: done**, including resending every frame. Frame-advantage sync is still open (MVP plan step 8).
 
 Don't advance when `next_tick - last_confirmed_remote_tick > MAX_ROLLBACK`. You can't see the peer's actual tick, only their last confirmed input. That one check covers both a slow peer and lost/late packets.
 
