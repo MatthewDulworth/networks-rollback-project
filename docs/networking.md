@@ -24,7 +24,11 @@ nothing about ticks. `packet.c` knows the format but nothing about sockets.
 
 ## The socket (`src/net/net.c`)
 
-`net_init(local_port, peer_ip, peer_port)`:
+`net_init(local_port, peer_ip, peer_port)` is `net_open` (steps 1–3) followed
+by `net_connect` (steps 4–5). LAN discovery calls the two separately, because
+it has to talk to anyone before it knows who the peer is (see "LAN
+discovery"). `net_open` also turns on `SO_BROADCAST`, without which sending to
+a broadcast address fails with `EACCES`.
 
 1. `socket(AF_INET, SOCK_DGRAM, 0)`: an IPv4 UDP socket.
 2. `fcntl(..., O_NONBLOCK)`: `recv` returns immediately with `EAGAIN` when
@@ -350,3 +354,62 @@ Extra flags (`--lag`, `--jitter`, `--loss`, `--delay`) are passed through.
   both.
 - Some networks (campus or guest Wi-Fi) block traffic between devices. A phone
   hotspot is a good fallback.
+- Or skip the IPs: `scripts/lan.sh` on both machines (see "LAN discovery").
+
+## LAN discovery (`src/net/discovery.c`)
+
+`./build/game lan` (or `scripts/lan.sh`) finds the other machine by UDP
+broadcast instead of being told its IP. It runs in the terminal before the
+window opens, on a socket from `net_open` that isn't connected yet.
+
+**Broadcast vs unicast.** A packet to `255.255.255.255` (limited broadcast)
+goes to every machine on the local network, on the given port. Routers never
+forward it, so this only works on one LAN, never across the internet. That's
+also why no server is needed: everyone on the LAN can already hear everyone.
+
+**Hello packet** (12 bytes, format in `packet.h`): magic `"RBH1"`, the
+sender's `id`, and `seen_id`, the id of the peer the sender has heard (0 if
+none). The magic differs from input packets, so neither decoder accepts the
+other's packets.
+
+**Handshake.** Both machines run the same code:
+
+1. Pick a random nonzero `id`.
+2. Every 100 ms, broadcast a hello. Once there's a candidate, also send it
+   one directly (unicast).
+3. Read everything waiting, using `recvfrom` to learn the sender's address:
+   - Hello with our own `id`: our broadcast looped back. Ignore.
+   - First hello from someone else: that's the candidate. Remember its
+     address and `id`. Hellos from anyone else after that are ignored.
+   - Hello from the candidate with `seen_id == our id`: it has heard us, and
+     we have heard it. Done.
+   - Input packet from the candidate: it has already finished and started
+     its match, which it only does after hearing us. Done.
+4. `connect` to the candidate and start the match as usual.
+
+The last case covers lost packets. Say A hears B's hello with `seen_id = A`
+and finishes. A stops sending hellos, so if A's own hellos with
+`seen_id = B` were all lost, B would wait forever. But A's match sends input
+packets every frame, and those tell B the same thing.
+
+**Who is player 1.** Lower `id` is player 1. Both machines know both ids, so
+they compute the same answer and get opposite players. If both picked the
+same id (1 in 4 billion), each would ignore the other as its own broadcast
+and keep searching.
+
+**Limits:**
+
+- Both machines use port 5000, so it needs two machines. Two copies on one
+  machine can't bind the same port.
+- With several networks (say Wi-Fi and a Thunderbolt cable), macOS sends
+  `255.255.255.255` out of one interface only, the one the default route
+  uses. Sending to each interface's own broadcast address (from
+  `getifaddrs`) would fix that.
+- If two pairs search on the same LAN at once, whoever hears whom first
+  becomes the candidate, so pairs can get mixed up or one machine can be
+  left waiting. A lobby name in the hello would fix it.
+- Nothing checks that both sides agree on `--delay`, same as with typed IPs.
+- The peer's last few hellos can arrive after the match starts. The session
+  drops them with a "dropped malformed packet" message, which is harmless.
+- Networks that block traffic between devices (campus Wi-Fi) block
+  broadcasts too.

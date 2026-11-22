@@ -70,6 +70,10 @@ arguments on each machine: it prints that machine's IP. The overlay also shows
 it (the "me" line) once the game is running. Accept the macOS
 "allow incoming connections" prompt on both. See `docs/networking.md`.
 
+Or skip the IPs: run `scripts/lan.sh` (same as `./build/game lan`) on both
+machines. They find each other by broadcast on port 5000 and pick players
+themselves. Two machines only. See "LAN discovery" in `docs/networking.md`.
+
 ### Simulating a bad network
 
 Add `--lag <ms>`, `--jitter <ms>` and/or `--loss <pct>` after the four

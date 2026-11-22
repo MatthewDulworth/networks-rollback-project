@@ -12,7 +12,9 @@ The demo runs on two separate laptops on the same network, not two windows on
 localhost.
 
 - Each peer is started with the other's LAN IP: `scripts/player1.sh <peer_ip>`
-  on one, `scripts/player2.sh <peer_ip>` on the other.
+  on one, `scripts/player2.sh <peer_ip>` on the other. Or `scripts/lan.sh`
+  on both to find each other by broadcast (see "LAN discovery" in
+  `networking.md`).
 - Show the local IP in the window title or overlay so it's easy to read off
   during setup.
 - macOS asks to allow incoming connections the first time. Accept it on both

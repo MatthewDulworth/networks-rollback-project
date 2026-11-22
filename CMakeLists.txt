@@ -46,6 +46,7 @@ set(CORE_SOURCES
     src/rollback/desync_check.c
     src/net/packet.c
     src/net/net.c
+    src/net/discovery.c
     src/net/netsim.c
     src/net/session.c
 )

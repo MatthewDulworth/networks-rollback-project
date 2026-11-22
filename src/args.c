@@ -27,15 +27,17 @@ static bool parse_non_negative(const char *text, int *out) {
 }
 
 bool parse_args(int argc, char **argv, Args *args) {
-    // Four positional arguments, then any number of "--flag value" pairs
-    // and value-less switches (--delay).
-    if (argc < 5) {
+    // Either "lan" or four positional arguments, then any number of
+    // "--flag value" pairs and value-less switches (--delay).
+    args->lan = argc >= 2 && strcmp(argv[1], "lan") == 0;
+    int first_flag = args->lan ? 2 : 5;
+    if (argc < first_flag) {
         return false;
     }
     memset(&args->netsim, 0, sizeof args->netsim);
     args->delay_mode = false;
     // One argument per step; a flag with a value consumes its value too.
-    for (int i = 5; i < argc; i++) {
+    for (int i = first_flag; i < argc; i++) {
         if (strcmp(argv[i], "--delay") == 0) {
             args->delay_mode = true;
             continue;
@@ -59,6 +61,15 @@ bool parse_args(int argc, char **argv, Args *args) {
         i++;  // skip the value
     }
 
+    if (args->lan) {
+        // Peer address and player come from discovery, in main.
+        args->local_port = LAN_PORT;
+        args->peer_ip = NULL;
+        args->peer_port = LAN_PORT;
+        args->player = PLAYER_1;
+        return true;
+    }
+
     args->peer_ip = argv[2];
     if (!parse_port(argv[1], &args->local_port)
         || !parse_port(argv[3], &args->peer_port)) {
@@ -78,8 +89,11 @@ void print_usage(const char *program) {
     fprintf(stderr,
             "usage: %s <local_port> <peer_ip> <peer_port> <player 0|1>"
             " [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
+            "   or: %s lan [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
             "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n"
+            "  lan finds the other machine by broadcast on port %d and picks\n"
+            "      the players itself (two machines only, both run \"lan\")\n"
             "  --lag/--jitter/--loss simulate a bad connection (both directions)\n"
             "  --delay uses delay-based netcode instead of rollback (no prediction)\n",
-            program, program);
+            program, program, program, LAN_PORT);
 }

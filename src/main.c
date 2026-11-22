@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "sim/sim.h"
 #include "rollback/sync_check.h"
+#include "net/discovery.h"
 #include "net/net.h"
 #include "net/netsim.h"
 #include "net/session.h"
@@ -20,20 +21,34 @@ int main(int argc, char **argv) {
         return 1;
     }
     // Before the window, so a bad address or busy port exits immediately.
-    if (!net_init(args.local_port, args.peer_ip, args.peer_port)) {
-        return 1;
+    // The overlay shows peer_addr, so each player can read off the address
+    // the other one needs to connect to.
+    char peer_addr[80];
+    if (args.lan) {
+        // Discovery waits (in the terminal) until the other machine is
+        // found, then tells us its address and which player we are.
+        if (!net_open(args.local_port)) {
+            return 1;
+        }
+        NetAddr peer;
+        discovery_run(args.local_port, &peer, &args.player);
+        if (!net_connect(peer)) {
+            return 1;
+        }
+        net_addr_to_string(peer, peer_addr, sizeof peer_addr);
+    } else {
+        if (!net_init(args.local_port, args.peer_ip, args.peer_port)) {
+            return 1;
+        }
+        snprintf(peer_addr, sizeof peer_addr, "%s:%u", args.peer_ip, args.peer_port);
     }
     netsim_init();
     netsim_set(args.netsim);
 
-    // For the overlay, so each player can read off the address the other
-    // one needs to connect to.
     char local_ip[64];
     net_local_ip(local_ip, sizeof local_ip);
     char local_addr[80];
-    char peer_addr[80];
     snprintf(local_addr, sizeof local_addr, "%s:%u", local_ip, args.local_port);
-    snprintf(peer_addr, sizeof peer_addr, "%s:%u", args.peer_ip, args.peer_port);
 
     char title[64];
     snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)%s",

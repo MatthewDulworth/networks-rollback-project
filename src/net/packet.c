@@ -98,3 +98,22 @@ bool packet_decode(const uint8_t *buf, size_t len, InputPacket *out) {
     }
     return true;
 }
+
+size_t hello_encode(const HelloPacket *hello, uint8_t *buf, size_t capacity) {
+    if (capacity < HELLO_SIZE) {
+        return 0;
+    }
+    write_u32(buf, HELLO_MAGIC);
+    write_u32(buf + 4, hello->id);
+    write_u32(buf + 8, hello->seen_id);
+    return HELLO_SIZE;
+}
+
+bool hello_decode(const uint8_t *buf, size_t len, HelloPacket *out) {
+    if (len != HELLO_SIZE || read_u32(buf) != HELLO_MAGIC) {
+        return false;
+    }
+    out->id = read_u32(buf + 4);
+    out->seen_id = read_u32(buf + 8);
+    return true;
+}

@@ -48,3 +48,24 @@ size_t packet_encode(const InputPacket *packet, uint8_t *buf, size_t capacity);
 // out unspecified) if the bytes aren't a valid packet: too short, wrong magic,
 // count too large, or len doesn't match count.
 bool packet_decode(const uint8_t *buf, size_t len, InputPacket *out);
+
+// --------------------------------------------------------
+// Hello: LAN discovery (discovery.c), sent before the match starts
+// --------------------------------------------------------
+//
+//   offset  size  field
+//   0       4     magic    HELLO_MAGIC, different from PACKET_MAGIC so neither
+//                          decoder accepts the other's packets
+//   4       4     id       uint32, random, picked by the sender at startup
+//   8       4     seen_id  uint32, id of the peer the sender has heard, or 0
+#define HELLO_MAGIC 0x52424831u  // "RBH1": rollback fighter hello, format 1
+#define HELLO_SIZE 12
+
+typedef struct {
+    uint32_t id;
+    uint32_t seen_id;
+} HelloPacket;
+
+// Same contract as packet_encode / packet_decode.
+size_t hello_encode(const HelloPacket *hello, uint8_t *buf, size_t capacity);
+bool hello_decode(const uint8_t *buf, size_t len, HelloPacket *out);
