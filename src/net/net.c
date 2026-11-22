@@ -32,6 +32,21 @@ bool net_init(uint16_t local_port, const char *peer_ip, uint16_t peer_port) {
         return false;
     }
 
+    // macOS: when send() fails with EPIPE (e.g. the peer is unreachable),
+    // the kernel also raises SIGPIPE, whose default action kills the
+    // process silently, before net_send can look at errno. This option
+    // turns the signal off for this socket so send() just returns -1.
+    // Linux and Windows don't have the option (Linux raises SIGPIPE only
+    // for stream sockets; Windows has no SIGPIPE), hence the #ifdef.
+#ifdef SO_NOSIGPIPE
+    int on = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on) < 0) {
+        perror("net: setsockopt SO_NOSIGPIPE");
+        net_shutdown();
+        return false;
+    }
+#endif
+
     // Bind our side: receive packets sent to local_port on any of this
     // machine's addresses (localhost, Wi-Fi, ...).
     struct sockaddr_in local;
