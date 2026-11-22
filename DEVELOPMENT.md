@@ -48,8 +48,17 @@ window receives keys, so click the window you want to control.
 
 ### Two machines
 
-Use each other's LAN IP instead of `127.0.0.1`. Ports can be the same, players
-must be opposite:
+One machine runs `player1.sh`, the other `player2.sh`, each with the other's
+LAN IP. They build first, then start the game on port 5000. Extra flags
+(`--lag` etc.) are passed through:
+
+```sh
+scripts/player1.sh <other_ip>     # machine A (blue)
+scripts/player2.sh <other_ip>     # machine B (red)
+```
+
+That's the same as running the game directly with the same port on both and
+opposite players:
 
 ```sh
 ./build/game 5000 <other_ip> 5000 0     # machine A

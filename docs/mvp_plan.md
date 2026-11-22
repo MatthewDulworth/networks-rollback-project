@@ -11,8 +11,8 @@ and still have something to demo.
 The demo runs on two separate laptops on the same network, not two windows on
 localhost.
 
-- Each peer is started with the other's LAN IP: `./build/game 5000 <peer_ip> 5000 0`
-  on one, `./build/game 5000 <peer_ip> 5000 1` on the other.
+- Each peer is started with the other's LAN IP: `scripts/player1.sh <peer_ip>`
+  on one, `scripts/player2.sh <peer_ip>` on the other.
 - Show the local IP in the window title or overlay so it's easy to read off
   during setup.
 - macOS asks to allow incoming connections the first time. Accept it on both

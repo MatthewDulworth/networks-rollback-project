@@ -274,9 +274,12 @@ on. Until then the game is stalled at the rollback limit anyway.
 ## Running on two machines
 
 ```sh
-./build/game 5000 <other_machine_ip> 5000 0     # machine A
-./build/game 5000 <other_machine_ip> 5000 1     # machine B
+scripts/player1.sh <other_machine_ip>     # machine A
+scripts/player2.sh <other_machine_ip>     # machine B
 ```
+
+These build, then run `./build/game 5000 <other_machine_ip> 5000 <0 or 1>`.
+Extra flags (`--lag`, `--jitter`, `--loss`) are passed through.
 
 - Both can use the same port, since they're different machines. Players must
   be opposite (0 and 1).
