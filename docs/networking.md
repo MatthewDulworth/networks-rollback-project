@@ -59,11 +59,14 @@ One packet type, sent once per frame in each direction:
 
 | Offset | Size | Field | |
 |---|---|---|---|
-| 0 | 4 | magic | `0x52424631` ("RBF1"). Rejects stray packets and other versions. |
+| 0 | 4 | magic | `0x52424632` ("RBF2"). Rejects stray packets and other versions. |
 | 4 | 4 | ack | Newest tick we have **all** of the peer's inputs for. |
-| 8 | 4 | first_tick | Tick of `inputs[0]`. |
-| 12 | 1 | count | Number of inputs, 0 to 32. |
-| 13 | 2 × count | inputs | One `uint16` bitmask per tick. |
+| 8 | 4 | sender_tick | The tick the sender simulates next. For frame advantage sync (not used yet). |
+| 12 | 4 | hash_tick | Tick of the confirmed state `hash` is for, or `NO_TICK` (-1). |
+| 16 | 4 | hash | FNV-1a hash of that state. See "Sync check" below. |
+| 20 | 4 | first_tick | Tick of `inputs[0]`. |
+| 24 | 1 | count | Number of inputs, 0 to 32. |
+| 25 | 2 × count | inputs | One `uint16` bitmask per tick. |
 
 - **Big-endian** (network byte order), built from shifts (`p[0] = v >> 24`,
   ...). The result doesn't depend on the CPU's own byte order, so the code
@@ -77,8 +80,11 @@ One packet type, sent once per frame in each direction:
   or a length that doesn't match the count all return `false`. Each check
   makes the next read safe. This is data from the network, so a bad packet is
   dropped and logged, never asserted.
-- Size: 13 + 2 × count bytes, so at most 77. With 28 bytes of IP and UDP
-  headers and 60 packets a second, that's at most about 6 KB/s each way.
+- Size: 25 + 2 × count bytes, so at most 89. With 28 bytes of IP and UDP
+  headers and 60 packets a second, that's at most about 7 KB/s each way.
+- Format 1 (`RBF1`) had no tick or hash fields. Changing the magic means an
+  old build and a new build reject each other's packets instead of misreading
+  them.
 - `tests/packet_test.c` checks round trips and rejection of bad packets. Run
   it with `ctest --test-dir build`.
 
@@ -178,6 +184,33 @@ What to expect: on a clean connection with under ~50 ms of one-way delay,
 rollbacks stay at 0, because the 3-tick input delay covers the latency and the
 real input always arrives before it's needed. As lag goes up, rollbacks and
 depth climb. Once depth is regularly 8, stalls start.
+
+## Sync check (`src/rollback/sync_check.c`)
+
+The local desync check (in `main.c`) only proves that rollback matches a
+replay on the **same** machine. The sync check proves the **two** machines
+agree with each other.
+
+- **Which state.** Snapshot `t` (the state before tick `t`) is final once
+  every input before it is confirmed (`t - 1 <= last_confirmed_remote_tick`)
+  and it has been saved (`t < next_tick`). It can never be rolled back after
+  that, so both machines must have the exact same bytes for it.
+  `hash_confirmed_states` hashes each snapshot once it becomes final. It runs
+  after every tick, like the desync check, so any rollback for this frame's
+  inputs has already happened and the snapshot is still in the state ring.
+- **Hash.** FNV-1a over the raw bytes of `GameState`: XOR in each byte, then
+  multiply by a prime. Raw bytes include padding, so padding must be zero
+  everywhere: `sim_init` uses `memset` and the sim copies states with
+  `memcpy`. Both machines also need the same struct layout (same compiler
+  and CPU type; two Macs are fine).
+- **Exchange.** Each packet carries our newest hash. Received hashes and our
+  own go into a 64-slot ring keyed by tick, and whichever of the two arrives
+  second triggers the comparison. That works whether the peer is ahead of us
+  or behind. A hash that's lost or falls out of the ring just means that tick
+  isn't compared.
+- **Overlay.** "sync --" until the first comparison, green "sync OK (tick N)"
+  while everything matches, red "DESYNC at tick N" for good after the first
+  mismatch.
 
 ## Disconnect
 

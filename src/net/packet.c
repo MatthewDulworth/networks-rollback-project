@@ -29,11 +29,14 @@ static uint32_t read_u32(const uint8_t *p) {
 }
 
 // Field offsets, matching the wire format table in packet.h.
-#define OFFSET_MAGIC      0
-#define OFFSET_ACK        4
-#define OFFSET_FIRST_TICK 8
-#define OFFSET_COUNT      12
-#define OFFSET_INPUTS     PACKET_HEADER_SIZE
+#define OFFSET_MAGIC       0
+#define OFFSET_ACK         4
+#define OFFSET_SENDER_TICK 8
+#define OFFSET_HASH_TICK   12
+#define OFFSET_HASH        16
+#define OFFSET_FIRST_TICK  20
+#define OFFSET_COUNT       24
+#define OFFSET_INPUTS      PACKET_HEADER_SIZE
 
 // --------------------------------------------------------
 // Encode / decode
@@ -52,6 +55,9 @@ size_t packet_encode(const InputPacket *packet, uint8_t *buf, size_t capacity) {
     // Ticks are signed (NO_TICK is -1). Converting to uint32_t is well
     // defined (wraps mod 2^32) and decode converts back.
     write_u32(buf + OFFSET_ACK, (uint32_t)packet->ack);
+    write_u32(buf + OFFSET_SENDER_TICK, (uint32_t)packet->sender_tick);
+    write_u32(buf + OFFSET_HASH_TICK, (uint32_t)packet->hash_tick);
+    write_u32(buf + OFFSET_HASH, packet->hash);
     write_u32(buf + OFFSET_FIRST_TICK, (uint32_t)packet->first_tick);
     buf[OFFSET_COUNT] = (uint8_t)packet->count;
 
@@ -82,6 +88,9 @@ bool packet_decode(const uint8_t *buf, size_t len, InputPacket *out) {
     // defined in C11, but every compiler we care about wraps it back, which
     // undoes the cast in encode.
     out->ack = (Tick)read_u32(buf + OFFSET_ACK);
+    out->sender_tick = (Tick)read_u32(buf + OFFSET_SENDER_TICK);
+    out->hash_tick = (Tick)read_u32(buf + OFFSET_HASH_TICK);
+    out->hash = read_u32(buf + OFFSET_HASH);
     out->first_tick = (Tick)read_u32(buf + OFFSET_FIRST_TICK);
     out->count = count;
     for (int i = 0; i < count; i++) {

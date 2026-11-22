@@ -16,19 +16,25 @@
 // Wire format, all multi-byte fields big-endian (network byte order):
 //
 //   offset  size  field
-//   0       4     magic       PACKET_MAGIC, rejects stray or foreign packets
-//   4       4     ack         int32, newest tick we have all remote inputs for
-//   8       4     first_tick  int32, tick of inputs[0]
-//   12      1     count       number of inputs that follow (0..PACKET_MAX_INPUTS)
-//   13      2*n   inputs      uint16 each
-#define PACKET_MAGIC 0x52424631u  // "RBF1": rollback fighter, format 1
-#define PACKET_HEADER_SIZE 13
+//   0       4     magic        PACKET_MAGIC, rejects stray or foreign packets
+//   4       4     ack          int32, newest tick we have all remote inputs for
+//   8       4     sender_tick  int32, the tick the sender will simulate next
+//   12      4     hash_tick    int32, tick of the state `hash` is for, or NO_TICK
+//   16      4     hash         uint32, hash of the sender's confirmed state
+//   20      4     first_tick   int32, tick of inputs[0]
+//   24      1     count        number of inputs that follow (0..PACKET_MAX_INPUTS)
+//   25      2*n   inputs       uint16 each
+#define PACKET_MAGIC 0x52424632u  // "RBF2": rollback fighter, format 2
+#define PACKET_HEADER_SIZE 25
 #define PACKET_MAX_SIZE (PACKET_HEADER_SIZE + 2 * PACKET_MAX_INPUTS)
 
 // A decoded packet, for use in the program. Never sent as-is: its layout in
 // memory (padding, byte order) isn't the wire format above.
 typedef struct {
     Tick ack;
+    Tick sender_tick;
+    Tick hash_tick;  // NO_TICK (-1) when there's no hash yet; hash is then 0.
+    uint32_t hash;
     Tick first_tick;
     int count;
     Input inputs[PACKET_MAX_INPUTS];

@@ -24,6 +24,9 @@ static InputPacket full_packet(void) {
     InputPacket p;
     memset(&p, 0, sizeof p);
     p.ack = 1000;
+    p.sender_tick = 1007;
+    p.hash_tick = 995;
+    p.hash = 0xDEADBEEFu;  // high bit set: must stay unsigned end to end
     p.first_tick = 123456;
     p.count = PACKET_MAX_INPUTS;
     for (int i = 0; i < p.count; i++) {
@@ -43,6 +46,9 @@ static void test_round_trip_full(void) {
     memset(&q, 0, sizeof q);
     CHECK(packet_decode(buf, n, &q));
     CHECK(q.ack == p.ack);
+    CHECK(q.sender_tick == p.sender_tick);
+    CHECK(q.hash_tick == p.hash_tick);
+    CHECK(q.hash == p.hash);
     CHECK(q.first_tick == p.first_tick);
     CHECK(q.count == p.count);
     CHECK(memcmp(q.inputs, p.inputs, sizeof p.inputs) == 0);
@@ -65,27 +71,34 @@ static void test_round_trip_empty(void) {
 
 static void test_negative_tick(void) {
     // NO_TICK is -1; it must survive the signed -> unsigned -> signed trip.
-    InputPacket p = { .ack = -1, .first_tick = -1, .count = 0 };
+    InputPacket p = { .ack = -1, .sender_tick = -1, .hash_tick = -1,
+                      .first_tick = -1, .count = 0 };
     uint8_t buf[PACKET_MAX_SIZE];
 
     size_t n = packet_encode(&p, buf, sizeof buf);
     InputPacket q;
     CHECK(packet_decode(buf, n, &q));
     CHECK(q.ack == -1);
+    CHECK(q.sender_tick == -1);
+    CHECK(q.hash_tick == -1);
     CHECK(q.first_tick == -1);
 }
 
 static void test_wire_bytes(void) {
     // Pin the exact format from packet.h, so a change to it can't slip by
     // unnoticed: the other peer may be running the old build.
-    InputPacket p = { .ack = -1, .first_tick = 123456, .count = 1 };
+    InputPacket p = { .ack = -1, .sender_tick = 300, .hash_tick = -1,
+                      .hash = 0x0A0B0C0Du, .first_tick = 123456, .count = 1 };
     p.inputs[0] = 0x0102;
     uint8_t buf[PACKET_MAX_SIZE];
 
     size_t n = packet_encode(&p, buf, sizeof buf);
     const uint8_t expected[] = {
-        0x52, 0x42, 0x46, 0x31,  // magic "RBF1"
+        0x52, 0x42, 0x46, 0x32,  // magic "RBF2"
         0xff, 0xff, 0xff, 0xff,  // ack -1
+        0x00, 0x00, 0x01, 0x2c,  // sender_tick 300
+        0xff, 0xff, 0xff, 0xff,  // hash_tick -1 (NO_TICK)
+        0x0a, 0x0b, 0x0c, 0x0d,  // hash, big-endian
         0x00, 0x01, 0xe2, 0x40,  // first_tick 123456
         0x01,                    // count
         0x01, 0x02,              // inputs[0], big-endian
@@ -126,7 +139,7 @@ static void test_decode_rejects(void) {
     CHECK(!packet_decode(buf, n, &q));                       // wrong magic
     buf[0] ^= 0x01;
 
-    buf[12] = 200;
+    buf[24] = 200;  // the count byte
     CHECK(!packet_decode(buf, n, &q));                       // count too large
 }
 

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include "sim/sim.h"
 #include "rollback/rollback.h"
+#include "rollback/sync_check.h"
 #include "net/net.h"
 #include "net/netsim.h"
 #include "net/packet.h"
@@ -165,6 +166,9 @@ static bool receive_packets(double now) {
 
         receive_ack(packet.ack);
         note_ack(packet.ack, now);
+        sync_check_add_remote(packet.hash_tick, packet.hash);
+        // packet.sender_tick is unused for now: it's for frame advantage
+        // sync (mvp_plan.md step 8).
         // Every packet repeats all inputs the peer hasn't seen acked, so
         // most of these are duplicates. add_remote_input ignores those (and
         // anything past a gap), so no filtering is needed here.
@@ -178,9 +182,14 @@ static bool receive_packets(double now) {
 // Send our ack and every local input the peer hasn't acked. Called once per
 // frame, even when nothing advanced: after a lost packet this resend is the
 // only way the peer ever gets those inputs.
-static void send_packet(double now) {
+static void send_packet(double now, Tick next_tick) {
     InputPacket packet;
     packet.ack = get_last_confirmed_remote_tick();
+    packet.sender_tick = next_tick;
+    // Only the newest hash. One per packet is enough: packets go out about
+    // once per tick, and a hash that's lost just means that tick isn't
+    // compared.
+    sync_check_newest_local(&packet.hash_tick, &packet.hash);
     find_inputs_to_resend(&packet.first_tick, &packet.count);
 
     // Keep the oldest inputs if there are too many: the peer needs them in
@@ -239,6 +248,30 @@ static void desync_check(Tick next_tick) {
         get_inputs(t, tick_input);
         sim(tick_input, &reference_state, &next);
         memcpy(&reference_state, &next, sizeof reference_state);
+    }
+}
+
+// --------------------------------------------------------
+// Confirmed state hashes (cross-machine sync check)
+// --------------------------------------------------------
+// Snapshot t (the state before tick t) is final once:
+// - every input it depends on (ticks 0 .. t-1) is confirmed, so it can never
+//   be rolled back again: t - 1 <= last confirmed remote tick, and
+// - it has been saved, which happens when tick t is simulated: t < next_tick.
+// Hash each snapshot once it's final and hand it to sync_check.
+//
+// Same timing rule as desync_check: call after every tick that advances, so
+// any rollback for inputs received this frame has already been applied, and
+// the snapshot is still in the state ring.
+static Tick next_hash_tick = 0;  // Oldest snapshot not hashed yet.
+
+static void hash_confirmed_states(Tick next_tick) {
+    Tick last_confirmed = get_last_confirmed_remote_tick();
+    while (next_hash_tick <= last_confirmed + 1 && next_hash_tick < next_tick) {
+        GameState snapshot;
+        load_state(next_hash_tick, &snapshot);
+        sync_check_add_local(next_hash_tick, sync_hash_state(&snapshot));
+        next_hash_tick++;
     }
 }
 
@@ -432,6 +465,19 @@ static void render_overlay(const char *local_addr, const char *peer_addr,
     DrawText("keys: 1/2 lag   3/4 jitter   5/6 loss   0 reset", 10, y, 10, GRAY);
     y += 14;
     DrawText(TextFormat("me %s   peer %s", local_addr, peer_addr), 10, y, 10, GRAY);
+    y += 14;
+
+    // Cross-machine hash check. Gray until the first comparison, green while
+    // every compared tick has matched, red for good once one hasn't.
+    Tick desync = sync_check_first_desync();
+    Tick match = sync_check_last_match();
+    if (desync != NO_TICK) {
+        DrawText(TextFormat("DESYNC at tick %d", desync), 10, y, 20, RED);
+    } else if (match != NO_TICK) {
+        DrawText(TextFormat("sync OK (tick %d)", match), 10, y, 20, DARKGREEN);
+    } else {
+        DrawText("sync --", 10, y, 20, GRAY);
+    }
 
     // Centered banners for states where the game isn't running normally.
     const char *banner = NULL;
@@ -507,6 +553,7 @@ int main(int argc, char **argv) {
     sim_init(&state);
     rollback_init(args.player);
     desync_check_init(&state);
+    sync_check_init();
 
     // Stand-in for the start handshake (see follow_ups.md, "Shared start
     // time"): don't start ticking until the first packet from the peer
@@ -622,6 +669,7 @@ int main(int argc, char **argv) {
                 // can run more ticks than the state ring holds, and the
                 // snapshots the check still needs would be overwritten.
                 desync_check(next_tick);
+                hash_confirmed_states(next_tick);
             }
         }
 
@@ -630,7 +678,7 @@ int main(int argc, char **argv) {
         // -------------------------------------------
         // Every frame, including while waiting for the peer (an empty packet
         // is what lets the peer see us) and while stalled.
-        send_packet(GetTime());
+        send_packet(GetTime(), next_tick);
         // Pushes out the packet just queued if it has no simulated delay,
         // instead of it waiting until next frame.
         netsim_update(GetTime());
