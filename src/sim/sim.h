@@ -29,6 +29,14 @@
 #define MAX_PLAYERS 2
 #define MAX_BULLETS 16
 
+#define BULLET_SIZE (4 * SUB_PIXEL_FACTOR)
+
+// Rules the renderer also needs (for the HUD).
+#define MAX_HEALTH 3
+#define MAGAZINE_SIZE 3
+#define RELOAD_TICKS 90
+#define KILLS_TO_WIN 3
+
 // --------------------------------------------------------
 // Basic types
 // --------------------------------------------------------
@@ -71,7 +79,7 @@ enum InputFields {
 // Map (static, not part of GameState)
 // --------------------------------------------------------
 
-#define NUM_MAP_OBJ 1
+#define NUM_MAP_OBJ 4
 
 // Defined in sim.c. Exposed so the renderer can draw it.
 extern const Collision MapCollision[NUM_MAP_OBJ];
@@ -121,8 +129,13 @@ typedef struct {
     uint8_t round_number; // Which round it is.
     uint8_t kills[MAX_PLAYERS]; // How many kills each player has
 
-    // How much time until the next round starts
+    // Ticks until the next round starts. 0 while a round is being played.
+    // While it's above 0 the game is frozen and shows who scored.
     int32_t round_over_time_left;
+
+    // Who won the round that just ended: PLAYER_1, PLAYER_2, or -1 for a tie.
+    // Only meaningful while round_over_time_left > 0.
+    int8_t round_winner;
 
     // The two player structs
     Player players[MAX_PLAYERS];
@@ -140,6 +153,9 @@ typedef struct {
 
 // Fill in the starting state for a match (tick 0).
 void sim_init(GameState *state);
+
+// PLAYER_1 or PLAYER_2 if that player has reached KILLS_TO_WIN, else -1.
+int sim_match_winner(const GameState *state);
 
 // Advance the game by one tick: next = step(prev, input).
 // prev and next must be different GameStates (they must not overlap).

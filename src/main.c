@@ -259,17 +259,82 @@ static void render(const GameState *state) {
     }
 
     const Color player_colors[MAX_PLAYERS] = { BLUE, RED };
+    const char *player_names[MAX_PLAYERS] = { "Blue", "Red" };
+
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        const Bullet *b = &state->bullets[i];
+        if (!b->active) continue;
+        Rectangle r = {
+            to_px(b->position.x), to_px(b->position.y),
+            to_px(BULLET_SIZE), to_px(BULLET_SIZE),
+        };
+        DrawRectangleRec(r, player_colors[b->owner]);
+    }
+
     for (int i = 0; i < MAX_PLAYERS; i++) {
         const Player *p = &state->players[i];
         Rectangle r = {
             to_px(p->position.x), to_px(p->position.y),
             to_px(PLAYER_WIDTH), to_px(PLAYER_HEIGHT),
         };
-        DrawRectangleRec(r, player_colors[i]);
+        // Flicker while in hitstun so hits are easy to see.
+        bool flicker = p->hitstun_left > 0 && (state->tick / 3) % 2 == 0;
+        DrawRectangleRec(r, flicker ? Fade(player_colors[i], 0.3f) : player_colors[i]);
 
         // Small mark on the facing side so direction is visible.
         float mark_x = p->facing_right ? r.x + r.width : r.x - 3;
         DrawRectangleRec((Rectangle){ mark_x, r.y + 2, 3, 3 }, BLACK);
+
+        float cx = r.x + r.width / 2;
+        float cy = r.y + r.height / 2;
+
+        // During shot startup, a line shows where the bullet will go.
+        if (p->shoot_startup_left > 0) {
+            Vector2 dir = {
+                to_px(p->queued_bullet_velocity.x), to_px(p->queued_bullet_velocity.y),
+            };
+            DrawLineEx((Vector2){ cx, cy },
+                       (Vector2){ cx + dir.x * 3, cy + dir.y * 3 }, 2, player_colors[i]);
+        }
+
+        // Health: one pip per point, above the player.
+        for (int h = 0; h < MAX_HEALTH; h++) {
+            Color c = h < p->health ? player_colors[i] : LIGHTGRAY;
+            DrawRectangleRec((Rectangle){ cx - 8 + h * 6, r.y - 8, 4, 4 }, c);
+        }
+        // Ammo: dots under the player, or a bar while reloading.
+        if (p->reload_frames_left > 0) {
+            float done = 1.0f - (float)p->reload_frames_left / RELOAD_TICKS;
+            DrawRectangleRec((Rectangle){ cx - 8, r.y + r.height + 4, 16, 2 }, LIGHTGRAY);
+            DrawRectangleRec((Rectangle){ cx - 8, r.y + r.height + 4, 16 * done, 2 }, DARKGRAY);
+        } else {
+            for (int a = 0; a < p->ammo; a++) {
+                DrawRectangleRec((Rectangle){ cx - 7 + a * 5, r.y + r.height + 4, 3, 3 }, DARKGRAY);
+            }
+        }
+    }
+
+    // Score, top right (the debug overlay is top left).
+    const char *score = TextFormat("%d - %d", state->kills[PLAYER_1], state->kills[PLAYER_2]);
+    int score_width = MeasureText(score, 30);
+    int score_x = MAP_PIXEL_WIDTH - score_width - 20;
+    DrawText(score, score_x, 10, 30, DARKGRAY);
+    DrawRectangle(score_x - 16, 20, 10, 10, player_colors[PLAYER_1]);
+    DrawRectangle(score_x + score_width + 6, 20, 10, 10, player_colors[PLAYER_2]);
+
+    // Between rounds: who scored, or who won the match.
+    if (state->round_over_time_left > 0) {
+        int match_winner = sim_match_winner(state);
+        const char *text;
+        if (match_winner >= 0) {
+            text = TextFormat("%s wins the match!", player_names[match_winner]);
+        } else if (state->round_winner >= 0) {
+            text = TextFormat("%s scores", player_names[state->round_winner]);
+        } else {
+            text = "Tie - no point";
+        }
+        int width = MeasureText(text, 40);
+        DrawText(text, (MAP_PIXEL_WIDTH - width) / 2, 150, 40, DARKGRAY);
     }
 }
 
@@ -468,6 +533,12 @@ int main(int argc, char **argv) {
         if (IsKeyDown(KEY_W)) local_input |= INPUT_MOVE_UP;
         if (IsKeyDown(KEY_S)) local_input |= INPUT_MOVE_DOWN;
         if (IsKeyDown(KEY_SPACE)) local_input |= INPUT_JUMP;
+        if (IsKeyDown(KEY_LEFT))  local_input |= INPUT_AIM_LEFT;
+        if (IsKeyDown(KEY_RIGHT)) local_input |= INPUT_AIM_RIGHT;
+        if (IsKeyDown(KEY_UP))    local_input |= INPUT_AIM_UP;
+        if (IsKeyDown(KEY_DOWN))  local_input |= INPUT_AIM_DOWN;
+        // J, or right shift which sits next to the arrow keys on a laptop.
+        if (IsKeyDown(KEY_J) || IsKeyDown(KEY_RIGHT_SHIFT)) local_input |= INPUT_SHOOT;
 
         handle_netsim_hotkeys();
 
