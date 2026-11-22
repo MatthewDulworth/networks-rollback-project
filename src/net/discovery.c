@@ -9,9 +9,15 @@
 // How often to send a hello, and so how often to check for replies.
 #define HELLO_INTERVAL_NS 100000000L  // 100 ms
 
-static bool same_addr(NetAddr a, NetAddr b) {
-    return a.ip == b.ip && a.port == b.port;
-}
+// The link-local multicast group hellos go to. IPv6 has no broadcast:
+// instead a packet goes to a group, and reaches the machines on the link
+// that joined it. ff02:: = link-local scope (routers never forward it, like
+// a broadcast). The rest is an arbitrary number of our own, so other
+// programs' multicast traffic doesn't reach us.
+#define LAN_GROUP "ff02::5242"
+
+// One destination per network interface (Wi-Fi, cable, ...).
+#define MAX_INTERFACES 16
 
 static void send_hello(NetAddr to, uint32_t my_id, uint32_t seen_id) {
     HelloPacket hello = { .id = my_id, .seen_id = seen_id };
@@ -21,7 +27,7 @@ static void send_hello(NetAddr to, uint32_t my_id, uint32_t seen_id) {
 }
 
 void discovery_run(uint16_t port, NetAddr *peer, int *player) {
-    // A random id tells our own broadcasts (which loop back to us) apart
+    // A random id tells our own hellos (multicast loops back to us) apart
     // from the peer's, and decides who is player 1. 0 means "nobody" in
     // seen_id, so don't pick it.
     uint32_t my_id;
@@ -38,14 +44,22 @@ void discovery_run(uint16_t port, NetAddr *peer, int *player) {
     fprintf(stderr, "discovery: looking for the other player on port %u"
                     " (Ctrl-C to give up)\n", port);
 
-    NetAddr broadcast = { .ip = NET_BROADCAST, .port = port };
+    NetAddr group[MAX_INTERFACES];
+    int group_count = net_join_multicast(LAN_GROUP, port, group, MAX_INTERFACES);
+    if (group_count == 0) {
+        fprintf(stderr, "discovery: no network interface to search on\n");
+    }
+
     bool done = false;
     while (!done) {
-        // Hello to everyone, and directly to the candidate once we have
-        // one. seen_id tells the candidate we've heard it. Sent every
-        // interval, so a lost hello is just replaced by the next one.
+        // Hello to the group on every interface, and directly to the
+        // candidate once we have one. seen_id tells the candidate we've
+        // heard it. Sent every interval, so a lost hello is just replaced
+        // by the next one.
         uint32_t seen_id = have_candidate ? candidate_id : 0;
-        send_hello(broadcast, my_id, seen_id);
+        for (int i = 0; i < group_count; i++) {
+            send_hello(group[i], my_id, seen_id);
+        }
         if (have_candidate) {
             send_hello(candidate, my_id, seen_id);
         }
@@ -57,13 +71,13 @@ void discovery_run(uint16_t port, NetAddr *peer, int *player) {
             HelloPacket hello;
             if (hello_decode(buf, (size_t)len, &hello)) {
                 if (hello.id == my_id) {
-                    continue;  // our own broadcast, looped back
+                    continue;  // our own hello, looped back
                 }
                 if (!have_candidate) {
                     have_candidate = true;
                     candidate = from;
                     candidate_id = hello.id;
-                    char text[32];
+                    char text[80];
                     net_addr_to_string(from, text, sizeof text);
                     fprintf(stderr, "discovery: heard %s\n", text);
                 } else if (hello.id != candidate_id) {
@@ -82,7 +96,7 @@ void discovery_run(uint16_t port, NetAddr *peer, int *player) {
             // replies to them were lost: it stops sending hellos, so its
             // input packets are the only sign left that it heard us.
             InputPacket input;
-            if (have_candidate && same_addr(from, candidate)
+            if (have_candidate && net_addr_equal(from, candidate)
                 && packet_decode(buf, (size_t)len, &input)) {
                 done = true;
             }
@@ -100,7 +114,7 @@ void discovery_run(uint16_t port, NetAddr *peer, int *player) {
     *peer = candidate;
     *player = my_id < candidate_id ? PLAYER_1 : PLAYER_2;
 
-    char text[32];
+    char text[80];
     net_addr_to_string(candidate, text, sizeof text);
     fprintf(stderr, "discovery: matched with %s, we are player %d\n",
             text, *player + 1);

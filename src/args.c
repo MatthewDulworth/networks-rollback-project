@@ -91,7 +91,7 @@ void print_usage(const char *program) {
             " [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
             "   or: %s lan [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
             "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n"
-            "  lan finds the other machine by broadcast on port %d and picks\n"
+            "  lan finds the other machine by multicast on port %d and picks\n"
             "      the players itself (two machines only, both run \"lan\")\n"
             "  --lag/--jitter/--loss simulate a bad connection (both directions)\n"
             "  --delay uses delay-based netcode instead of rollback (no prediction)\n",

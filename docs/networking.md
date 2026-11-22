@@ -27,15 +27,20 @@ nothing about ticks. `packet.c` knows the format but nothing about sockets.
 `net_init(local_port, peer_ip, peer_port)` is `net_open` (steps 1–3) followed
 by `net_connect` (steps 4–5). LAN discovery calls the two separately, because
 it has to talk to anyone before it knows who the peer is (see "LAN
-discovery"). `net_open` also turns on `SO_BROADCAST`, without which sending to
-a broadcast address fails with `EACCES`.
+discovery").
 
-1. `socket(AF_INET, SOCK_DGRAM, 0)`: an IPv4 UDP socket.
+1. `socket(AF_INET6, SOCK_DGRAM, 0)`: an IPv6 UDP socket, with
+   `IPV6_V6ONLY` off so it handles IPv4 too ("dual-stack"). IPv4 address
+   `a.b.c.d` appears as the IPv4-mapped address `::ffff:a.b.c.d`, and goes
+   out as a plain IPv4 packet. One code path for both.
 2. `fcntl(..., O_NONBLOCK)`: `recv` returns immediately with `EAGAIN` when
    nothing has arrived, instead of freezing the game loop.
-3. `bind` to `INADDR_ANY:local_port`: accept packets sent to this port on any
-   of the machine's addresses (localhost, Wi-Fi, Ethernet).
-4. `inet_pton` turns the peer's `"a.b.c.d"` text into a 32-bit address.
+3. `bind` to `[::]:local_port`: accept packets sent to this port on any of
+   the machine's addresses, IPv4 and IPv6 (localhost, Wi-Fi, Ethernet).
+4. `getaddrinfo` with `AI_NUMERICHOST` (parse only, no DNS) turns the peer's
+   text into an address: `192.168.1.5`, `2607:fb91::1`, or link-local
+   `fe80::1%en0`. A link-local address is only unique on one link, so it
+   needs the interface (`%en0`), which becomes the **scope id**.
 5. `connect`: on UDP this **sends nothing**. It sets the default destination,
    so plain `send()` works, and makes the kernel drop packets from any other
    address, so `recv()` only ever returns the peer's packets.
@@ -358,14 +363,39 @@ Extra flags (`--lag`, `--jitter`, `--loss`, `--delay`) are passed through.
 
 ## LAN discovery (`src/net/discovery.c`)
 
-`./build/game lan` (or `scripts/lan.sh`) finds the other machine by UDP
-broadcast instead of being told its IP. It runs in the terminal before the
-window opens, on a socket from `net_open` that isn't connected yet.
+`./build/game lan` (or `scripts/lan.sh`) finds the other machine by IPv6
+link-local multicast instead of being told its IP. It runs in the terminal
+before the window opens, on a socket from `net_open` that isn't connected
+yet.
 
-**Broadcast vs unicast.** A packet to `255.255.255.255` (limited broadcast)
-goes to every machine on the local network, on the given port. Routers never
-forward it, so this only works on one LAN, never across the internet. That's
-also why no server is needed: everyone on the LAN can already hear everyone.
+**Why IPv6.** The first version used IPv4 broadcast. It worked on a home LAN
+but not on a T-Mobile phone hotspot, which is **IPv6-only**: the laptops get
+IPv6 addresses but no IPv4 address. macOS fakes IPv4 with a translator
+(CLAT, part of 464XLAT): every laptop gets the same `192.0.0.2`, and IPv4
+packets are converted to IPv6 and sent to the carrier, not to the other
+laptop. Discovery "heard" the peer from `192.0.0.1` (the translator) and
+connected to it, so no game packet ever arrived. IPv6 link-local addresses
+(`fe80::`) exist on every IPv6 network, including a home LAN and a direct
+cable, so one approach covers all three.
+
+**Multicast instead of broadcast.** IPv6 has no broadcast. A multicast
+packet goes to a **group** address and reaches every machine on the link
+that has joined the group. `ff02::` addresses are link-local scope: like a
+broadcast, routers never forward them, so this only works on one LAN, never
+across the internet. That's also why no server is needed. The game uses its
+own group, `ff02::5242`, so it doesn't get other programs' traffic.
+
+`net_join_multicast` joins the group (`IPV6_JOIN_GROUP`) on every interface
+that is up, can multicast, and isn't loopback or a point-to-point tunnel.
+Tunnels matter: a Mac has several `utun` interfaces (VPNs, iCloud Private
+Relay), some with IPv6 default routes, and hellos sent there would never
+reach the LAN. Each hello is sent once per interface, with that interface's
+index as the destination's scope id, which picks the interface it goes out
+on.
+
+The peer's address comes from `recvfrom`: its link-local address with the
+scope of the interface it arrived on, e.g. `[fe80::77:2315:3b66:21b5%en0]`.
+The match then runs over that address.
 
 **Hello packet** (12 bytes, format in `packet.h`): magic `"RBH1"`, the
 sender's `id`, and `seen_id`, the id of the peer the sender has heard (0 if
@@ -375,10 +405,11 @@ other's packets.
 **Handshake.** Both machines run the same code:
 
 1. Pick a random nonzero `id`.
-2. Every 100 ms, broadcast a hello. Once there's a candidate, also send it
+2. Every 100 ms, send a hello to the group on every interface. Once there's a candidate, also send it
    one directly (unicast).
 3. Read everything waiting, using `recvfrom` to learn the sender's address:
-   - Hello with our own `id`: our broadcast looped back. Ignore.
+   - Hello with our own `id`: our own hello, looped back (multicast is delivered to the sender too).
+     Ignore.
    - First hello from someone else: that's the candidate. Remember its
      address and `id`. Hellos from anyone else after that are ignored.
    - Hello from the candidate with `seen_id == our id`: it has heard us, and
@@ -394,17 +425,16 @@ packets every frame, and those tell B the same thing.
 
 **Who is player 1.** Lower `id` is player 1. Both machines know both ids, so
 they compute the same answer and get opposite players. If both picked the
-same id (1 in 4 billion), each would ignore the other as its own broadcast
+same id (1 in 4 billion), each would ignore the other as its own hello
 and keep searching.
 
 **Limits:**
 
 - Both machines use port 5000, so it needs two machines. Two copies on one
   machine can't bind the same port.
-- With several networks (say Wi-Fi and a Thunderbolt cable), macOS sends
-  `255.255.255.255` out of one interface only, the one the default route
-  uses. Sending to each interface's own broadcast address (from
-  `getifaddrs`) would fix that.
+- With several networks (say Wi-Fi and a cable), hellos go out on all of
+  them, and whichever peer is heard first wins.
+- Both machines need IPv6, which macOS always has (link-local at least).
 - If two pairs search on the same LAN at once, whoever hears whom first
   becomes the candidate, so pairs can get mixed up or one machine can be
   left waiting. A lobby name in the hello would fix it.
@@ -412,4 +442,4 @@ and keep searching.
 - The peer's last few hellos can arrive after the match starts. The session
   drops them with a "dropped malformed packet" message, which is harmless.
 - Networks that block traffic between devices (campus Wi-Fi) block
-  broadcasts too.
+  multicast too.

@@ -11,7 +11,7 @@
 #define LAN_PORT 5000
 
 typedef struct {
-    bool lan;  // "lan": find the peer by broadcast. Then peer_ip is NULL
+    bool lan;  // "lan": find the peer by multicast. Then peer_ip is NULL
                // and player is only a placeholder until discovery runs.
     uint16_t local_port;
     const char *peer_ip;  // points into argv

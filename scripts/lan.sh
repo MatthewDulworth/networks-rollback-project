@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Play against another machine on the same LAN without typing its IP. Run
-# this on both machines: they find each other by UDP broadcast on port 5000
+# this on both machines: they find each other by IPv6 multicast on port 5000
 # and pick who is player 1 / player 2 themselves.
 #
 # Usage: scripts/lan.sh [--lag ms] [--jitter ms] [--loss pct] [--delay]

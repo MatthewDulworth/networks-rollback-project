@@ -13,7 +13,7 @@ localhost.
 
 - Each peer is started with the other's LAN IP: `scripts/player1.sh <peer_ip>`
   on one, `scripts/player2.sh <peer_ip>` on the other. Or `scripts/lan.sh`
-  on both to find each other by broadcast (see "LAN discovery" in
+  on both to find each other by multicast (see "LAN discovery" in
   `networking.md`).
 - Show the local IP in the window title or overlay so it's easy to read off
   during setup.

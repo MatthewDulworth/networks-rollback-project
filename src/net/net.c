@@ -1,51 +1,92 @@
 #include "net/net.h"
 
-#include <arpa/inet.h>   // inet_pton, htons
+#include <arpa/inet.h>   // inet_ntop, htons
 #include <errno.h>
 #include <fcntl.h>       // fcntl, O_NONBLOCK
 #include <ifaddrs.h>     // getifaddrs
-#include <net/if.h>      // IFF_UP, IFF_LOOPBACK
-#include <netinet/in.h>  // sockaddr_in, INADDR_ANY
+#include <net/if.h>      // IFF_UP, if_nametoindex, if_indextoname
+#include <netdb.h>       // getaddrinfo
+#include <netinet/in.h>  // sockaddr_in6, in6addr_any, IPV6_JOIN_GROUP
 #include <stdio.h>       // perror, fprintf
-#include <string.h>      // memset
+#include <string.h>      // memset, memcpy
 #include <sys/socket.h>
 #include <unistd.h>      // close
 
 // The one socket this module owns. -1 means "not open".
 static int sock = -1;
 
+// IPv4 a.b.c.d as an IPv4-mapped IPv6 address ::ffff:a.b.c.d. A dual-stack
+// socket sends these as plain IPv4 packets.
+static void map_ipv4(const struct in_addr *v4, uint8_t out[16]) {
+    memset(out, 0, 10);
+    out[10] = 0xff;
+    out[11] = 0xff;
+    memcpy(out + 12, &v4->s_addr, 4);  // already network byte order
+}
+
 bool net_init(uint16_t local_port, const char *peer_ip, uint16_t peer_port) {
     if (!net_open(local_port)) {
         return false;
     }
 
-    // Peer address: text "a.b.c.d" -> 32-bit address in network byte order.
-    struct in_addr ip;
-    if (inet_pton(AF_INET, peer_ip, &ip) != 1) {
+    // Peer address text -> NetAddr. getaddrinfo with AI_NUMERICHOST parses
+    // IPv4 and IPv6 text (including "fe80::1%en0", whose interface becomes
+    // the scope id) without doing a DNS lookup.
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_NUMERICHOST;
+    struct addrinfo *result;
+    if (getaddrinfo(peer_ip, NULL, &hints, &result) != 0) {
         fprintf(stderr, "net: invalid peer address '%s'\n", peer_ip);
         net_shutdown();
         return false;
     }
-    NetAddr peer = { .ip = ntohl(ip.s_addr), .port = peer_port };
+    NetAddr peer = { .port = peer_port };
+    if (result->ai_family == AF_INET) {
+        const struct sockaddr_in *v4 = (const struct sockaddr_in *)result->ai_addr;
+        map_ipv4(&v4->sin_addr, peer.ip);
+    } else {
+        const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)result->ai_addr;
+        memcpy(peer.ip, &v6->sin6_addr, 16);
+        peer.scope_id = v6->sin6_scope_id;
+    }
+    freeaddrinfo(result);
     return net_connect(peer);
 }
 
-// NetAddr (host byte order) -> sockaddr_in (network byte order).
-static struct sockaddr_in to_sockaddr(NetAddr addr) {
-    struct sockaddr_in out;
+// NetAddr -> sockaddr_in6, the form the socket calls take.
+static struct sockaddr_in6 to_sockaddr(NetAddr addr) {
+    struct sockaddr_in6 out;
     memset(&out, 0, sizeof out);
-    out.sin_family = AF_INET;
-    out.sin_addr.s_addr = htonl(addr.ip);
-    out.sin_port = htons(addr.port);
+#ifdef SIN6_LEN
+    out.sin6_len = sizeof out;  // BSD/macOS have a length field; Linux doesn't
+#endif
+    out.sin6_family = AF_INET6;
+    out.sin6_port = htons(addr.port);
+    memcpy(&out.sin6_addr, addr.ip, 16);
+    // For link-local addresses: which interface to send on. fe80::1 on
+    // Wi-Fi and fe80::1 on the cable are different machines.
+    out.sin6_scope_id = addr.scope_id;
     return out;
 }
 
 bool net_open(uint16_t local_port) {
-    // AF_INET = IPv4, SOCK_DGRAM = UDP (0 lets the OS pick the protocol,
-    // which for an IPv4 datagram socket is UDP).
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    // AF_INET6 = IPv6, SOCK_DGRAM = UDP (0 lets the OS pick the protocol,
+    // which for a datagram socket is UDP).
+    sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("net: socket");
+        return false;
+    }
+
+    // Dual-stack: also send and receive IPv4, as IPv4-mapped addresses. The
+    // default differs between systems, so set it explicitly.
+    int v6only = 0;
+    if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof v6only) < 0) {
+        perror("net: setsockopt IPV6_V6ONLY");
+        net_shutdown();
         return false;
     }
 
@@ -73,23 +114,16 @@ bool net_open(uint16_t local_port) {
     }
 #endif
 
-    // Sending to a broadcast address fails with EACCES unless the socket
-    // asks for it first: a guard against broadcasting by accident, since a
-    // broadcast reaches every machine on the LAN. Used by LAN discovery.
-    int broadcast = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof broadcast) < 0) {
-        perror("net: setsockopt SO_BROADCAST");
-        net_shutdown();
-        return false;
-    }
-
     // Bind our side: receive packets sent to local_port on any of this
-    // machine's addresses (localhost, Wi-Fi, ...).
-    struct sockaddr_in local;
+    // machine's addresses, IPv4 and IPv6 (localhost, Wi-Fi, cable, ...).
+    struct sockaddr_in6 local;
     memset(&local, 0, sizeof local);
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_ANY);
-    local.sin_port = htons(local_port);
+#ifdef SIN6_LEN
+    local.sin6_len = sizeof local;
+#endif
+    local.sin6_family = AF_INET6;
+    local.sin6_addr = in6addr_any;
+    local.sin6_port = htons(local_port);
     if (bind(sock, (struct sockaddr *)&local, sizeof local) < 0) {
         perror("net: bind");  // EADDRINUSE: another copy already has this port
         net_shutdown();
@@ -99,7 +133,7 @@ bool net_open(uint16_t local_port) {
 }
 
 bool net_connect(NetAddr peer_addr) {
-    struct sockaddr_in peer = to_sockaddr(peer_addr);
+    struct sockaddr_in6 peer = to_sockaddr(peer_addr);
 
     // connect() on UDP sends nothing. It sets the default destination (so
     // plain send() works) and makes the kernel drop packets from any other
@@ -111,6 +145,63 @@ bool net_connect(NetAddr peer_addr) {
     }
 
     return true;
+}
+
+int net_join_multicast(const char *group, uint16_t port, NetAddr *dests, int max) {
+    struct in6_addr group_addr;
+    if (inet_pton(AF_INET6, group, &group_addr) != 1) {
+        fprintf(stderr, "net: invalid multicast group '%s'\n", group);
+        return 0;
+    }
+
+    // getifaddrs lists every address on every interface. Every interface
+    // with IPv6 has exactly one link-local (fe80::) address, so visiting
+    // only those visits each IPv6 interface once.
+    struct ifaddrs *list;
+    if (getifaddrs(&list) != 0) {
+        perror("net: getifaddrs");
+        return 0;
+    }
+    int count = 0;
+    for (struct ifaddrs *ifa = list; ifa != NULL && count < max; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET6) {
+            continue;
+        }
+        const struct sockaddr_in6 *addr = (const struct sockaddr_in6 *)ifa->ifa_addr;
+        if (!IN6_IS_ADDR_LINKLOCAL(&addr->sin6_addr)) {
+            continue;
+        }
+        unsigned flags = ifa->ifa_flags;
+        if (!(flags & IFF_UP) || !(flags & IFF_RUNNING) || !(flags & IFF_MULTICAST)) {
+            continue;  // down, no link, or can't multicast
+        }
+        if (flags & (IFF_LOOPBACK | IFF_POINTOPOINT)) {
+            continue;  // lo0, or a tunnel (utun = VPNs, iCloud Private Relay)
+        }
+        unsigned index = if_nametoindex(ifa->ifa_name);
+        if (index == 0) {
+            continue;
+        }
+
+        // Ask the kernel to deliver packets sent to the group on this
+        // interface to our socket. The network card also starts accepting
+        // the group's Ethernet multicast address.
+        struct ipv6_mreq join;
+        memset(&join, 0, sizeof join);
+        join.ipv6mr_multiaddr = group_addr;
+        join.ipv6mr_interface = index;
+        if (setsockopt(sock, IPPROTO_IPV6, IPV6_JOIN_GROUP, &join, sizeof join) < 0) {
+            fprintf(stderr, "net: join %s on %s: %s\n", group, ifa->ifa_name, strerror(errno));
+            continue;
+        }
+
+        NetAddr *dest = &dests[count++];
+        memcpy(dest->ip, &group_addr, 16);
+        dest->port = port;
+        dest->scope_id = index;  // send on this interface
+    }
+    freeifaddrs(list);
+    return count;
 }
 
 void net_shutdown(void) {
@@ -137,7 +228,7 @@ bool net_send(const uint8_t *data, size_t len) {
 }
 
 bool net_send_to(NetAddr to, const uint8_t *data, size_t len) {
-    struct sockaddr_in addr = to_sockaddr(to);
+    struct sockaddr_in6 addr = to_sockaddr(to);
     // sendto: send with an explicit destination, for a socket that isn't
     // connected (or to go somewhere other than the connected peer).
     ssize_t sent = sendto(sock, data, len, 0, (struct sockaddr *)&addr, sizeof addr);
@@ -159,14 +250,25 @@ int net_receive_from(uint8_t *buf, size_t capacity, NetAddr *from) {
     for (;;) {
         // recvfrom also fills in the sender's address. On a connected socket
         // that's always the peer; before connecting it can be anyone.
-        struct sockaddr_in sender;
+        // sockaddr_storage is big enough for any address type. A
+        // dual-stack socket reports IPv4 senders as IPv4-mapped IPv6.
+        struct sockaddr_storage sender;
         socklen_t sender_len = sizeof sender;
         ssize_t received = recvfrom(sock, buf, capacity, 0,
                                     (struct sockaddr *)&sender, &sender_len);
         if (received >= 0) {
             if (from != NULL) {
-                from->ip = ntohl(sender.sin_addr.s_addr);
-                from->port = ntohs(sender.sin_port);
+                memset(from, 0, sizeof *from);
+                if (sender.ss_family == AF_INET6) {
+                    const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)&sender;
+                    memcpy(from->ip, &v6->sin6_addr, 16);
+                    from->port = ntohs(v6->sin6_port);
+                    from->scope_id = v6->sin6_scope_id;
+                } else if (sender.ss_family == AF_INET) {
+                    const struct sockaddr_in *v4 = (const struct sockaddr_in *)&sender;
+                    map_ipv4(&v4->sin_addr, from->ip);
+                    from->port = ntohs(v4->sin_port);
+                }
             }
             return (int)received;
         }
@@ -187,11 +289,30 @@ int net_receive_from(uint8_t *buf, size_t capacity, NetAddr *from) {
     }
 }
 
+bool net_addr_equal(NetAddr a, NetAddr b) {
+    return memcmp(a.ip, b.ip, 16) == 0 && a.port == b.port && a.scope_id == b.scope_id;
+}
+
 void net_addr_to_string(NetAddr addr, char *out, size_t capacity) {
-    struct in_addr ip = { .s_addr = htonl(addr.ip) };
-    char text[INET_ADDRSTRLEN];  // longest "a.b.c.d" plus '\0'
-    inet_ntop(AF_INET, &ip, text, sizeof text);
-    snprintf(out, capacity, "%s:%u", text, addr.port);
+    struct in6_addr ip;
+    memcpy(&ip, addr.ip, 16);
+    if (IN6_IS_ADDR_V4MAPPED(&ip)) {
+        // Show IPv4 the familiar way: the last 4 bytes, "a.b.c.d:port".
+        char text[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, addr.ip + 12, text, sizeof text);
+        snprintf(out, capacity, "%s:%u", text, addr.port);
+        return;
+    }
+    char text[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &ip, text, sizeof text);
+    // "%en0" for link-local: the address alone doesn't say which interface.
+    char scope[IF_NAMESIZE + 1] = "";
+    char name[IF_NAMESIZE];
+    if (addr.scope_id != 0 && if_indextoname(addr.scope_id, name) != NULL) {
+        snprintf(scope, sizeof scope, "%%%s", name);
+    }
+    // Brackets keep the port's ':' apart from the address's colons.
+    snprintf(out, capacity, "[%s%s]:%u", text, scope, addr.port);
 }
 
 void net_local_ip(char *out, size_t capacity) {
