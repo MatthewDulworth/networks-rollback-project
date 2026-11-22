@@ -1,5 +1,5 @@
 #include "rollback/sync_check.h"
-#include "rollback/rollback.h"  // NO_TICK
+#include "rollback/rollback.h"  // NO_TICK, load_state, last confirmed tick
 #include <string.h>
 
 // --------------------------------------------------------
@@ -53,6 +53,9 @@ static uint32_t newest_local_hash;
 static Tick last_match;
 static Tick first_desync;
 
+// Oldest snapshot not hashed yet.
+static Tick next_hash_tick;
+
 void sync_check_init(void) {
     memset(ring, 0, sizeof ring);
     for (size_t i = 0; i < SYNC_RING_SIZE; i++) {
@@ -62,6 +65,7 @@ void sync_check_init(void) {
     newest_local_hash = 0;
     last_match = NO_TICK;
     first_desync = NO_TICK;
+    next_hash_tick = 0;
 }
 
 // Slot for `tick`, cleared if it held an older tick. NULL if a newer tick
@@ -92,7 +96,8 @@ static void compare(const SyncSlot *slot) {
     }
 }
 
-void sync_check_add_local(Tick tick, uint32_t hash) {
+// Our hash of the confirmed state before `tick` (the snapshot for `tick`).
+static void add_local(Tick tick, uint32_t hash) {
     SyncSlot *slot = claim_slot(tick);
     if (slot == NULL) {
         return;
@@ -104,6 +109,24 @@ void sync_check_add_local(Tick tick, uint32_t hash) {
         newest_local_hash = hash;
     }
     compare(slot);
+}
+
+// --------------------------------------------------------
+// Public interface
+// --------------------------------------------------------
+
+// Snapshot t (the state before tick t) is final once:
+// - every input it depends on (ticks 0 .. t-1) is confirmed, so it can never
+//   be rolled back again: t - 1 <= last confirmed remote tick, and
+// - it has been saved, which happens when tick t is simulated: t < next_tick.
+void sync_check_after_tick(Tick next_tick) {
+    Tick last_confirmed = get_last_confirmed_remote_tick();
+    while (next_hash_tick <= last_confirmed + 1 && next_hash_tick < next_tick) {
+        GameState snapshot;
+        load_state(next_hash_tick, &snapshot);
+        add_local(next_hash_tick, sync_hash_state(&snapshot));
+        next_hash_tick++;
+    }
 }
 
 void sync_check_add_remote(Tick tick, uint32_t hash) {

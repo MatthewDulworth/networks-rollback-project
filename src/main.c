@@ -6,6 +6,7 @@
 #include "sim/sim.h"
 #include "rollback/rollback.h"
 #include "rollback/sync_check.h"
+#include "rollback/desync_check.h"
 #include "net/net.h"
 #include "net/netsim.h"
 #include "net/session.h"
@@ -88,73 +89,6 @@ static bool parse_args(int argc, char **argv, Args *args) {
         return false;
     }
     return true;
-}
-
-// --------------------------------------------------------
-// Desync check (testing only)
-// --------------------------------------------------------
-// A second copy of the game that never guesses: it only runs a tick once both
-// players' inputs for it are confirmed. Rollback promises that once the inputs
-// are known, its snapshot for a tick is exactly what you'd get by simulating
-// with the real inputs from the start. This checks that promise byte for byte.
-static GameState reference_state;
-
-static void desync_check_init(const GameState *start) {
-    memcpy(&reference_state, start, sizeof reference_state);
-}
-
-// Call after every tick that advances (never before this frame's rollback), so
-// every saved snapshot reflects all remote inputs received so far, and the
-// reference never falls further behind than the state ring reaches.
-static void desync_check(Tick next_tick) {
-    Tick last_confirmed = get_last_confirmed_remote_tick();
-
-    // Tick T can be checked and stepped once its inputs are confirmed
-    // (T <= last_confirmed) and it has been simulated (T < next_tick).
-    while (reference_state.tick <= last_confirmed
-           && reference_state.tick < next_tick) {
-        Tick t = reference_state.tick;
-
-        // Snapshot t is the rollback side's state before tick t.
-        GameState snapshot;
-        load_state(t, &snapshot);
-        if (memcmp(&snapshot, &reference_state, sizeof snapshot) != 0) {
-            TraceLog(LOG_ERROR, "DESYNC at tick %d", t);
-            assert(false && "rollback state differs from confirmed-only state");
-        }
-
-        // Tick t is confirmed for both players, so get_inputs returns the
-        // real inputs and doesn't predict anything.
-        Input tick_input[MAX_PLAYERS];
-        GameState next;
-        get_inputs(t, tick_input);
-        sim(tick_input, &reference_state, &next);
-        memcpy(&reference_state, &next, sizeof reference_state);
-    }
-}
-
-// --------------------------------------------------------
-// Confirmed state hashes (cross-machine sync check)
-// --------------------------------------------------------
-// Snapshot t (the state before tick t) is final once:
-// - every input it depends on (ticks 0 .. t-1) is confirmed, so it can never
-//   be rolled back again: t - 1 <= last confirmed remote tick, and
-// - it has been saved, which happens when tick t is simulated: t < next_tick.
-// Hash each snapshot once it's final and hand it to sync_check.
-//
-// Same timing rule as desync_check: call after every tick that advances, so
-// any rollback for inputs received this frame has already been applied, and
-// the snapshot is still in the state ring.
-static Tick next_hash_tick = 0;  // Oldest snapshot not hashed yet.
-
-static void hash_confirmed_states(Tick next_tick) {
-    Tick last_confirmed = get_last_confirmed_remote_tick();
-    while (next_hash_tick <= last_confirmed + 1 && next_hash_tick < next_tick) {
-        GameState snapshot;
-        load_state(next_hash_tick, &snapshot);
-        sync_check_add_local(next_hash_tick, sync_hash_state(&snapshot));
-        next_hash_tick++;
-    }
 }
 
 // --------------------------------------------------------
@@ -390,7 +324,7 @@ int main(int argc, char **argv) {
                 // can run more ticks than the state ring holds, and the
                 // snapshots the check still needs would be overwritten.
                 desync_check(next_tick);
-                hash_confirmed_states(next_tick);
+                sync_check_after_tick(next_tick);
             }
         }
 

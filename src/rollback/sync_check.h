@@ -19,8 +19,11 @@ uint32_t sync_hash_state(const GameState *state);
 // Forget every stored hash and any detected desync.
 void sync_check_init(void);
 
-// Our hash of the confirmed state before `tick` (the snapshot for `tick`).
-void sync_check_add_local(Tick tick, uint32_t hash);
+// Hash every saved snapshot that has become final since the last call and
+// record it as ours. Call after every tick that advances (like
+// desync_check), so any rollback for this frame's inputs has already been
+// applied and the snapshots are still in the state ring.
+void sync_check_after_tick(Tick next_tick);
 
 // A hash the peer sent. Ignored if tick is NO_TICK or too old to compare.
 void sync_check_add_remote(Tick tick, uint32_t hash);
