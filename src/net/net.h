@@ -24,3 +24,9 @@ bool net_send(const uint8_t *data, size_t len);
 // returns 0 or less. A packet longer than capacity is cut off, so capacity
 // should be at least the largest packet you ever send.
 int net_receive(uint8_t *buf, size_t capacity);
+
+// Write this machine's LAN IPv4 address (dotted, e.g. "192.168.1.5") into
+// out, for showing on screen so the other player knows what to connect to.
+// Picks the first interface that is up, isn't loopback and has an IPv4
+// address. Writes "unknown" if there is none.
+void net_local_ip(char *out, size_t capacity);

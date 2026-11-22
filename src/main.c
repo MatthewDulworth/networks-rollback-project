@@ -6,6 +6,7 @@
 #include "sim/sim.h"
 #include "rollback/rollback.h"
 #include "net/net.h"
+#include "net/netsim.h"
 #include "net/packet.h"
 
 #define STEP (1.0 / 60.0)
@@ -22,6 +23,7 @@ typedef struct {
     const char *peer_ip;
     uint16_t peer_port;
     int player;  // PLAYER_1 or PLAYER_2; must be opposite on the two peers
+    NetsimSettings netsim;  // Optional --lag/--jitter/--loss, default all 0
 } Args;
 
 static bool parse_port(const char *text, uint16_t *out) {
@@ -35,10 +37,42 @@ static bool parse_port(const char *text, uint16_t *out) {
     return true;
 }
 
-static bool parse_args(int argc, char **argv, Args *args) {
-    if (argc != 5) {
+// A non-negative whole number with nothing after it.
+static bool parse_non_negative(const char *text, int *out) {
+    char *end;
+    long value = strtol(text, &end, 10);
+    if (end == text || *end != '\0' || value < 0 || value > 100000) {
         return false;
     }
+    *out = (int)value;
+    return true;
+}
+
+static bool parse_args(int argc, char **argv, Args *args) {
+    // Four positional arguments, then any number of "--flag value" pairs.
+    if (argc < 5) {
+        return false;
+    }
+    memset(&args->netsim, 0, sizeof args->netsim);
+    for (int i = 5; i < argc; i += 2) {
+        if (i + 1 >= argc) {
+            return false;  // flag with no value after it
+        }
+        int *field;
+        if (strcmp(argv[i], "--lag") == 0) {
+            field = &args->netsim.lag_ms;
+        } else if (strcmp(argv[i], "--jitter") == 0) {
+            field = &args->netsim.jitter_ms;
+        } else if (strcmp(argv[i], "--loss") == 0) {
+            field = &args->netsim.loss_pct;
+        } else {
+            return false;
+        }
+        if (!parse_non_negative(argv[i + 1], field)) {
+            return false;
+        }
+    }
+
     args->peer_ip = argv[2];
     if (!parse_port(argv[1], &args->local_port)
         || !parse_port(argv[3], &args->peer_port)) {
@@ -58,14 +92,70 @@ static bool parse_args(int argc, char **argv, Args *args) {
 // Network glue: rollback module <-> packets <-> net module
 // --------------------------------------------------------
 
+// --------------------------------------------------------
+// Round-trip time, measured from acks
+// --------------------------------------------------------
+// When a local input goes out for the first time, remember when. When the
+// peer's ack first covers that tick, the time since then is one round trip.
+//
+// This measures more than the pure network delay: the peer only acks when it
+// next sends (end of its frame), and we only read the ack at the start of our
+// next frame, so up to a frame on each side is included. A lost packet also
+// shows up as a spike, because the ack waits for the resend. That's fine for
+// an overlay: it's the delay the game actually experiences.
+
+// Must cover every unacked tick, and the rollback input ring is 32 slots, so
+// 64 is plenty. Power of 2 so the slot is a mask, as in rollback.c.
+#define SEND_TIME_RING 64
+
+typedef struct {
+    Tick tick;
+    double time;
+} SendTime;
+
+static SendTime send_times[SEND_TIME_RING];
+static Tick newest_timed_tick = NO_TICK;  // Newest tick with a send time.
+static Tick newest_rtt_ack = NO_TICK;     // Newest ack already measured.
+static double rtt_ms = -1;                // Smoothed; -1 until first sample.
+
+static SendTime *send_time_slot(Tick tick) {
+    return &send_times[(uint32_t)tick & (SEND_TIME_RING - 1)];
+}
+
+// Called for every tick in an outgoing packet. Only the first send counts.
+static void note_sent(Tick tick, double now) {
+    if (tick > newest_timed_tick) {
+        SendTime *slot = send_time_slot(tick);
+        slot->tick = tick;
+        slot->time = now;
+        newest_timed_tick = tick;
+    }
+}
+
+static void note_ack(Tick ack, double now) {
+    if (ack <= newest_rtt_ack) {
+        return;  // old or duplicate ack: already measured
+    }
+    newest_rtt_ack = ack;
+
+    SendTime *slot = send_time_slot(ack);
+    if (slot->tick != ack) {
+        return;  // a prefilled tick we never sent, or an overwritten slot
+    }
+    double sample = (now - slot->time) * 1000.0;
+    // Exponential moving average: each sample moves the estimate 10% of the
+    // way. Smooths jitter so the number on screen is readable.
+    rtt_ms = rtt_ms < 0 ? sample : rtt_ms * 0.9 + sample * 0.1;
+}
+
 // Drain every waiting packet into the rollback module. Returns true if at
 // least one valid packet arrived.
-static bool receive_packets(void) {
+static bool receive_packets(double now) {
     uint8_t buf[PACKET_MAX_SIZE];
     bool got_any = false;
     int len;
 
-    while ((len = net_receive(buf, sizeof buf)) > 0) {
+    while ((len = netsim_receive(buf, sizeof buf)) > 0) {
         InputPacket packet;
         if (!packet_decode(buf, (size_t)len, &packet)) {
             TraceLog(LOG_WARNING, "net: dropped malformed packet (%d bytes)", len);
@@ -74,6 +164,7 @@ static bool receive_packets(void) {
         got_any = true;
 
         receive_ack(packet.ack);
+        note_ack(packet.ack, now);
         // Every packet repeats all inputs the peer hasn't seen acked, so
         // most of these are duplicates. add_remote_input ignores those (and
         // anything past a gap), so no filtering is needed here.
@@ -87,7 +178,7 @@ static bool receive_packets(void) {
 // Send our ack and every local input the peer hasn't acked. Called once per
 // frame, even when nothing advanced: after a lost packet this resend is the
 // only way the peer ever gets those inputs.
-static void send_packet(void) {
+static void send_packet(double now) {
     InputPacket packet;
     packet.ack = get_last_confirmed_remote_tick();
     find_inputs_to_resend(&packet.first_tick, &packet.count);
@@ -99,12 +190,13 @@ static void send_packet(void) {
     }
     for (int i = 0; i < packet.count; i++) {
         packet.inputs[i] = get_local_input(packet.first_tick + i);
+        note_sent(packet.first_tick + i, now);
     }
 
     uint8_t buf[PACKET_MAX_SIZE];
     size_t len = packet_encode(&packet, buf, sizeof buf);
     assert(len > 0);  // count is clamped and buf is max size, so can't fail
-    net_send(buf, len);
+    netsim_send(buf, len);
 }
 
 // --------------------------------------------------------
@@ -181,6 +273,115 @@ static void render(const GameState *state) {
     }
 }
 
+// --------------------------------------------------------
+// Stats for the overlay
+// --------------------------------------------------------
+// Counted over one-second windows. The overlay shows the last finished
+// window, so the numbers update once a second instead of flickering.
+
+typedef struct {
+    int rollbacks;       // Rollbacks performed.
+    int max_depth;       // Deepest rollback, in ticks.
+    int stalled_frames;  // Frames that hit the rollback limit and stopped.
+} StatWindow;
+
+static StatWindow stats_current;
+static StatWindow stats_shown;
+static double stats_window_start;
+
+static void stats_update(double now) {
+    if (now - stats_window_start >= 1.0) {
+        stats_shown = stats_current;
+        memset(&stats_current, 0, sizeof stats_current);
+        stats_window_start = now;
+    }
+}
+
+static void stats_note_rollback(Tick depth) {
+    stats_current.rollbacks++;
+    if (depth > stats_current.max_depth) {
+        stats_current.max_depth = depth;
+    }
+}
+
+// --------------------------------------------------------
+// Netsim hotkeys
+// --------------------------------------------------------
+// Number keys, not F-keys: on a Mac laptop F-keys need fn held down.
+#define LAG_STEP_MS 20
+#define JITTER_STEP_MS 10
+#define LOSS_STEP_PCT 5
+
+// True on the frame a key goes down. Built from IsKeyDown because input is
+// polled twice per frame, which breaks raylib's IsKeyPressed (see the
+// comment at PollInputEvents in main).
+static bool key_went_down(int key) {
+    static bool was_down[512];
+    assert(key >= 0 && key < 512);
+    bool down = IsKeyDown(key);
+    bool went_down = down && !was_down[key];
+    was_down[key] = down;
+    return went_down;
+}
+
+static void handle_netsim_hotkeys(void) {
+    NetsimSettings s = netsim_get();
+    if (key_went_down(KEY_ONE))   s.lag_ms -= LAG_STEP_MS;
+    if (key_went_down(KEY_TWO))   s.lag_ms += LAG_STEP_MS;
+    if (key_went_down(KEY_THREE)) s.jitter_ms -= JITTER_STEP_MS;
+    if (key_went_down(KEY_FOUR))  s.jitter_ms += JITTER_STEP_MS;
+    if (key_went_down(KEY_FIVE))  s.loss_pct -= LOSS_STEP_PCT;
+    if (key_went_down(KEY_SIX))   s.loss_pct += LOSS_STEP_PCT;
+    if (key_went_down(KEY_ZERO))  memset(&s, 0, sizeof s);
+    netsim_set(s);  // clamps, so going below 0 or above the max is harmless
+}
+
+// --------------------------------------------------------
+// Overlay
+// --------------------------------------------------------
+
+// No packet for this long means the peer is probably gone (closed the game,
+// lost Wi-Fi). Long enough that a short Wi-Fi hiccup doesn't trigger it.
+#define DISCONNECT_TIMEOUT 3.0
+
+static void render_overlay(const char *local_addr, const char *peer_addr,
+                           bool peer_seen, bool disconnected) {
+    int y = 10;
+    if (rtt_ms >= 0) {
+        DrawText(TextFormat("ping %d ms", (int)(rtt_ms + 0.5)), 10, y, 20, DARKGRAY);
+    } else {
+        DrawText("ping --", 10, y, 20, DARKGRAY);
+    }
+    y += 22;
+    DrawText(TextFormat("rollbacks/s %d   max depth %d   stalls/s %d",
+                        stats_shown.rollbacks, stats_shown.max_depth,
+                        stats_shown.stalled_frames),
+             10, y, 20, DARKGRAY);
+    y += 22;
+
+    NetsimSettings s = netsim_get();
+    DrawText(TextFormat("sim lag %d ms   jitter %d ms   loss %d%%   (dropped %d)",
+                        s.lag_ms, s.jitter_ms, s.loss_pct, netsim_dropped_count()),
+             10, y, 20, s.lag_ms || s.jitter_ms || s.loss_pct ? MAROON : DARKGRAY);
+    y += 24;
+    DrawText("keys: 1/2 lag   3/4 jitter   5/6 loss   0 reset", 10, y, 10, GRAY);
+    y += 14;
+    DrawText(TextFormat("me %s   peer %s", local_addr, peer_addr), 10, y, 10, GRAY);
+
+    // Centered banners for states where the game isn't running normally.
+    const char *banner = NULL;
+    if (!peer_seen) {
+        banner = "Waiting for peer...";
+    } else if (disconnected) {
+        banner = "Peer disconnected";
+    }
+    if (banner != NULL) {
+        int width = MeasureText(banner, 30);
+        DrawText(banner, (MAP_PIXEL_WIDTH - width) / 2, MAP_PIXEL_HEIGHT / 2 - 15, 30,
+                 disconnected ? RED : GRAY);
+    }
+}
+
 // Run one tick: snapshot the state before it, look up both players' inputs
 // from the rollback buffer, step the sim, and make the result current.
 // Used by both the normal advance loop and rollback re-simulation.
@@ -202,8 +403,10 @@ int main(int argc, char **argv) {
     Args args;
     if (!parse_args(argc, argv, &args)) {
         fprintf(stderr,
-                "usage: %s <local_port> <peer_ip> <peer_port> <player 0|1>\n"
-                "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n",
+                "usage: %s <local_port> <peer_ip> <peer_port> <player 0|1>"
+                " [--lag ms] [--jitter ms] [--loss pct]\n"
+                "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n"
+                "  --lag/--jitter/--loss simulate a bad connection (both directions)\n",
                 argv[0], argv[0]);
         return 1;
     }
@@ -211,6 +414,17 @@ int main(int argc, char **argv) {
     if (!net_init(args.local_port, args.peer_ip, args.peer_port)) {
         return 1;
     }
+    netsim_init();
+    netsim_set(args.netsim);
+
+    // For the overlay, so each player can read off the address the other
+    // one needs to connect to.
+    char local_ip[64];
+    net_local_ip(local_ip, sizeof local_ip);
+    char local_addr[80];
+    char peer_addr[80];
+    snprintf(local_addr, sizeof local_addr, "%s:%u", local_ip, args.local_port);
+    snprintf(peer_addr, sizeof peer_addr, "%s:%u", args.peer_ip, args.peer_port);
 
     char title[64];
     snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)",
@@ -235,6 +449,7 @@ int main(int argc, char **argv) {
     // one-way trip of the other. Tick times are measured from start_time.
     bool peer_seen = false;
     double start_time = 0;
+    double last_packet_time = 0;
 
     Input local_input = 0;
 
@@ -254,16 +469,29 @@ int main(int argc, char **argv) {
         if (IsKeyDown(KEY_S)) local_input |= INPUT_MOVE_DOWN;
         if (IsKeyDown(KEY_SPACE)) local_input |= INPUT_JUMP;
 
+        handle_netsim_hotkeys();
+
         // -------------------------------------------
         // Receive
         // -------------------------------------------
         // Before rollback, so the newest remote inputs are used to fix the
         // past before we build new ticks on top of it.
-        if (receive_packets() && !peer_seen) {
-            peer_seen = true;
-            start_time = frame_start;
-            TraceLog(LOG_INFO, "net: peer connected, starting match");
+        // netsim first: it reads the socket and releases packets whose
+        // simulated delay is over.
+        netsim_update(frame_start);
+        if (receive_packets(frame_start)) {
+            last_packet_time = frame_start;
+            if (!peer_seen) {
+                peer_seen = true;
+                start_time = frame_start;
+                TraceLog(LOG_INFO, "net: peer connected, starting match");
+            }
         }
+        // Display only: if packets start arriving again, the game just
+        // carries on (stalled at the rollback limit until then).
+        bool disconnected = peer_seen
+            && frame_start - last_packet_time > DISCONNECT_TIMEOUT;
+        stats_update(frame_start);
 
         if (peer_seen) {
             // Seconds since the match started on this machine.
@@ -277,8 +505,11 @@ int main(int argc, char **argv) {
                 // can_advance keeps guessed ticks to MAX_ROLLBACK, so a deeper
                 // rollback means that limit was broken somewhere.
                 Tick depth = next_tick - rollback_point;
-                TraceLog(LOG_INFO, "rollback: to tick %d, depth %d", rollback_point, depth);
+                // LOG_DEBUG (hidden by default): with simulated lag this
+                // happens many times a second. The overlay shows the counts.
+                TraceLog(LOG_DEBUG, "rollback: to tick %d, depth %d", rollback_point, depth);
                 assert(depth <= MAX_ROLLBACK);
+                stats_note_rollback(depth);
 
                 load_state(rollback_point, &state); // Load the state from the rollback point into current state
 
@@ -303,6 +534,7 @@ int main(int argc, char **argv) {
                 // condition is still true, so `continue` would spin here instead
                 // of going on to receive, send and render.
                 if (!can_advance(next_tick)) {
+                    stats_current.stalled_frames++;
                     break;
                 }
 
@@ -327,7 +559,10 @@ int main(int argc, char **argv) {
         // -------------------------------------------
         // Every frame, including while waiting for the peer (an empty packet
         // is what lets the peer see us) and while stalled.
-        send_packet();
+        send_packet(GetTime());
+        // Pushes out the packet just queued if it has no simulated delay,
+        // instead of it waiting until next frame.
+        netsim_update(GetTime());
 
         // -------------------------------------------
         // Render
@@ -336,9 +571,7 @@ int main(int argc, char **argv) {
         ClearBackground(RAYWHITE);
 
         render(&state);
-        if (!peer_seen) {
-            DrawText("Waiting for peer...", 20, 20, 20, GRAY);
-        }
+        render_overlay(local_addr, peer_addr, peer_seen, disconnected);
 
         EndDrawing();
 

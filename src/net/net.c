@@ -3,6 +3,8 @@
 #include <arpa/inet.h>   // inet_pton, htons
 #include <errno.h>
 #include <fcntl.h>       // fcntl, O_NONBLOCK
+#include <ifaddrs.h>     // getifaddrs
+#include <net/if.h>      // IFF_UP, IFF_LOOPBACK
 #include <netinet/in.h>  // sockaddr_in, INADDR_ANY
 #include <stdio.h>       // perror, fprintf
 #include <string.h>      // memset
@@ -110,4 +112,27 @@ int net_receive(uint8_t *buf, size_t capacity) {
         perror("net: recv");
         return -1;
     }
+}
+
+void net_local_ip(char *out, size_t capacity) {
+    snprintf(out, capacity, "unknown");
+
+    // getifaddrs gives a linked list of every address on every network
+    // interface (en0 = Wi-Fi on most Macs, lo0 = loopback, utun = VPNs...).
+    struct ifaddrs *list;
+    if (getifaddrs(&list) != 0) {
+        return;
+    }
+    for (struct ifaddrs *ifa = list; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;  // no address, or not IPv4
+        }
+        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) {
+            continue;  // interface down, or 127.0.0.1
+        }
+        const struct sockaddr_in *addr = (const struct sockaddr_in *)ifa->ifa_addr;
+        inet_ntop(AF_INET, &addr->sin_addr, out, (socklen_t)capacity);
+        break;
+    }
+    freeifaddrs(list);
 }
