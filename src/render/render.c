@@ -108,8 +108,12 @@ void render_game(const GameState *state) {
 
 void render_overlay(const OverlayInfo *info) {
     int y = 10;
+    // Ping, then frame advantage on the same line: positive means this
+    // machine is ahead of the peer (and slowing down to let it catch up).
     if (info->rtt_ms >= 0) {
-        DrawText(TextFormat("ping %d ms", (int)(info->rtt_ms + 0.5)), 10, y, 20, DARKGRAY);
+        DrawText(TextFormat("ping %d ms   advantage %+.1f",
+                            (int)(info->rtt_ms + 0.5), info->frame_advantage),
+                 10, y, 20, DARKGRAY);
     } else {
         DrawText("ping --", 10, y, 20, DARKGRAY);
     }

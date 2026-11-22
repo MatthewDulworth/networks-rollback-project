@@ -3,6 +3,7 @@
 #include "net/packet.h"
 #include "rollback/rollback.h"
 #include "rollback/sync_check.h"
+#include "sim/sim.h"
 #include <assert.h>
 #include <stdio.h>
 
@@ -40,6 +41,10 @@ static double rtt_ms;           // Smoothed; -1 until first sample.
 static bool peer_seen;
 static double last_packet_time;
 
+// Frame advantage
+static Tick highest_sender_tick;
+static double highest_sender_arrival_time;
+
 void session_init(void) {
     for (size_t i = 0; i < SEND_TIME_RING; i++) {
         send_times[i].tick = NO_TICK;
@@ -50,6 +55,8 @@ void session_init(void) {
     rtt_ms = -1;
     peer_seen = false;
     last_packet_time = 0;
+    highest_sender_tick = NO_TICK;
+    highest_sender_arrival_time = 0;
 }
 
 static SendTime *send_time_slot(Tick tick) {
@@ -102,8 +109,12 @@ void session_receive(double now) {
         receive_ack(packet.ack);
         note_ack(packet.ack, now);
         sync_check_add_remote(packet.hash_tick, packet.hash);
-        // packet.sender_tick is unused for now: it's for frame advantage
-        // sync (mvp_plan.md step 8).
+
+        if (packet.sender_tick > highest_sender_tick) {
+            highest_sender_tick = packet.sender_tick;
+            highest_sender_arrival_time = now;
+        }
+
         // Every packet repeats all inputs the peer hasn't seen acked, so
         // most of these are duplicates. add_remote_input ignores those (and
         // anything past a gap), so no filtering is needed here.
@@ -155,4 +166,21 @@ bool session_disconnected(double now) {
 
 double session_rtt_ms(void) {
     return rtt_ms;
+}
+
+double session_frame_advantage(double now, Tick next_tick) {
+    // No estimate yet: no RTT sample, or the peer hasn't started ticking
+    // (it sends sender_tick 0 while it waits for our first packet). 0 is
+    // inside any dead zone, so the caller does nothing.
+    if (rtt_ms < 0 || highest_sender_tick <= 0) {
+        return 0;
+    }
+
+    // sender_tick was the peer's tick when it sent. Since then the packet
+    // spent about half a round trip in flight, and it has been sitting here
+    // since it arrived. The peer kept ticking through both.
+    double one_way = rtt_ms / 1000.0 / 2;
+    double since_arrival = now - highest_sender_arrival_time;
+    double remote_now = highest_sender_tick + (one_way + since_arrival) / STEP;
+    return next_tick - remote_now;
 }

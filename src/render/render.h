@@ -25,6 +25,7 @@ typedef struct {
     Tick sync_first_desync;  // NO_TICK if no desync
     bool peer_seen;
     bool disconnected;
+    double frame_advantage;  // ticks ahead of the peer; 0 before an estimate
 } OverlayInfo;
 
 // Debug overlay (top left) and the waiting / disconnected banners.

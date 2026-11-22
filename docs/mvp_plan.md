@@ -68,7 +68,7 @@ determinism mistake immediately.
 - Short pause, reset positions, first to 3 kills wins.
 - HUD for health, ammo and kills. A couple of platforms on the map.
 
-## Phase 3: Networking extras, in order of value (6 and 7 done)
+## Phase 3: Networking extras, in order of value (6, 7 and 8 done)
 
 **6. Packet format v2** (magic `RBF2`): add the sender's current tick and a
 `(hash_tick, hash)` pair, so the format only changes once.

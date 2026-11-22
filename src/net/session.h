@@ -30,3 +30,15 @@ bool session_disconnected(double now);
 
 // Smoothed round-trip time in milliseconds, or -1 before the first sample.
 double session_rtt_ms(void);
+
+// How many ticks we're ahead of the peer right now (negative: behind),
+// estimated from the peer's newest sender_tick, half the RTT and how long ago
+// that packet arrived. Returns 0 until there's an estimate (no RTT sample
+// yet, or the peer hasn't started ticking).
+//
+// Call it after this frame's simulate loop, with the next_tick we're about to
+// send. sender_tick is the peer's next_tick at that same point in its frame
+// (after simulating), so both sides compare like with like. Called before
+// simulating, next_tick is one tick behind that and every estimate comes
+// out about 1 tick too low.
+double session_frame_advantage(double now, Tick next_tick);

@@ -13,10 +13,21 @@
 #include "args.h"
 #include "input.h"
 
-#define STEP (1.0 / 60.0)
 #define CATCHUP_MARGIN (0.004)
 #define TICK_THRESHOLD (STEP / 30.0)
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+
+// Frame advantage sync: when we're more than THRESHOLD ticks ahead of the
+// peer, push start_time back by NUDGE each frame until we're not.
+// - THRESHOLD 1: the estimate swings by about +-1 tick from jitter. Lower
+//   values mostly react to that noise (twice the nudges, no better balance);
+//   2 barely ever fires and leaves one peer doing most of the rollbacks.
+// - NUDGE STEP/10: drops one tick every 10 frames while correcting, which is
+//   barely visible, and closes a typical 3-tick lead in about half a second.
+//   STEP/2 balanced just as well but visibly runs at half speed, and wasted
+//   ~4x more time on nudges caused by noise.
+#define FRAME_ADVANTAGE_THRESHOLD 1.0
+#define FRAME_ADVANTAGE_NUDGE (STEP / 10.0)
 
 // --------------------------------------------------------
 // Stats for the overlay
@@ -114,6 +125,8 @@ int main(int argc, char **argv) {
     bool started = false;
     double start_time = 0;
 
+    double frame_advantage = 0;
+
     Input local_input = 0;
 
     while (!WindowShouldClose()) {
@@ -208,6 +221,19 @@ int main(int argc, char **argv) {
                 desync_check(next_tick);
                 sync_check_after_tick(next_tick);
             }
+
+            // -------------------------------------------
+            // Frame advantage
+            // -------------------------------------------
+            // After simulating, so next_tick means the same as the peer's
+            // sender_tick (see session.h). Moving start_time only changes
+            // *when* later ticks run, never what they compute, so it can't
+            // cause a desync. Only the peer that's ahead slows down.
+            frame_advantage = session_frame_advantage(GetTime(), next_tick);
+
+            if (frame_advantage > FRAME_ADVANTAGE_THRESHOLD) {
+                start_time += FRAME_ADVANTAGE_NUDGE;
+            }
         }
 
         // -------------------------------------------
@@ -243,6 +269,7 @@ int main(int argc, char **argv) {
             .sync_first_desync = sync_check_first_desync(),
             .peer_seen = started,
             .disconnected = session_disconnected(frame_start),
+            .frame_advantage = frame_advantage,
         };
         render_overlay(&info);
 

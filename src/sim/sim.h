@@ -11,6 +11,11 @@
 // Units and sizes
 // --------------------------------------------------------
 
+// Seconds per tick (60 Hz). Wall-clock only: the main loop and netcode use
+// it to decide *when* ticks run. The sim never reads it, because floats in
+// the sim would break determinism.
+#define STEP (1.0 / 60.0)
+
 // All positions, sizes and velocities in the sim are in subpixels.
 #define SUB_PIXEL_FACTOR 256
 

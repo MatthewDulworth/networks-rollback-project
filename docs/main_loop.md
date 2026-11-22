@@ -34,7 +34,7 @@ runs a little behind, and rollback covers the difference.
 | 1. Input | `read_local_input()` (`IsKeyDown` only), then `handle_netsim_hotkeys()`. | Sampled once per frame. |
 | 2. Receive | `netsim_update`, then `session_receive`. Start the match once `session_peer_seen()`, and roll the stats window. | **Before rollback**, so the newest remote inputs fix the past before new ticks are built on top of it. |
 | 3. Rollback | If `find_rollback_point()` gives tick M: `load_state(M)`, then `process_tick` for M up to `next_tick - 1`, then `clear_rollback_point()`. Counted for the overlay. | Asserts depth ≤ `MAX_ROLLBACK`. `can_advance` guarantees that, so a deeper rollback means a bug. |
-| 4. Simulate | Run every tick that's due (see below). | |
+| 4. Simulate | Run every tick that's due (see below). Then measure frame advantage and, if we're over a tick ahead, push `start_time` forward a little. | Advantage after simulating, so `next_tick` matches the peer's `sender_tick` (see `networking.md`). |
 | 5. Send | `session_send`, then `netsim_update` again. | **Every frame**, even while stalled or waiting for the peer (see `networking.md`). |
 | 6. Render | `render_game`, then fill an `OverlayInfo` and `render_overlay`. | Reads the state only. |
 | 7. Wait | Sleep until the next tick is due (one `STEP` while stalled or before the match), then poll input again. | |

@@ -61,7 +61,7 @@ One packet type, sent once per frame in each direction:
 |---|---|---|---|
 | 0 | 4 | magic | `0x52424632` ("RBF2"). Rejects stray packets and other versions. |
 | 4 | 4 | ack | Newest tick we have **all** of the peer's inputs for. |
-| 8 | 4 | sender_tick | The tick the sender simulates next. For frame advantage sync (not used yet). |
+| 8 | 4 | sender_tick | The tick the sender simulates next. For frame advantage sync. |
 | 12 | 4 | hash_tick | Tick of the confirmed state `hash` is for, or `NO_TICK` (-1). |
 | 16 | 4 | hash | FNV-1a hash of that state. See "Sync check" below. |
 | 20 | 4 | first_tick | Tick of `inputs[0]`. |
@@ -97,8 +97,9 @@ One packet type, sent once per frame in each direction:
 3. `add_remote_input` for every input in it. Most are duplicates (each packet
    repeats everything unacked), and the rollback module ignores those and
    anything past a gap, so no filtering is needed here.
-4. `sync_check_add_remote(hash_tick, hash)`. `sender_tick` is read but not
-   used yet (it's for frame advantage sync, MVP plan step 8).
+4. `sync_check_add_remote(hash_tick, hash)`.
+5. Remember the highest `sender_tick` seen and when it arrived, for frame
+   advantage (below).
 
 **`session_send(now, next_tick)`** sends once per frame, **even when no tick advanced**:
 
@@ -178,7 +179,7 @@ Top left of the window:
 
 | Line | Meaning |
 |---|---|
-| ping | Smoothed RTT, above. |
+| ping, advantage | Smoothed RTT, above. Frame advantage in ticks, below: positive means this machine is ahead. |
 | rollbacks/s, max depth, stalls/s | Counted over one-second windows; the last finished window is shown so the numbers don't flicker. Depth is how many ticks were re-simulated (at most `MAX_ROLLBACK`, 8). A stall is a frame that hit the rollback limit and stopped advancing. |
 | sim lag / jitter / loss (dropped) | Current netsim settings (red when any are on) and how many packets it has dropped. |
 | me / peer | This machine's address and port, and the peer's. |
@@ -214,6 +215,54 @@ agree with each other.
 - **Overlay.** "sync --" until the first comparison, green "sync OK (tick N)"
   while everything matches, red "DESYNC at tick N" for good after the first
   mismatch.
+
+## Frame advantage
+
+Each peer starts its clock when the other's first packet arrives, so whichever
+starts second is behind by about the one-way latency, for good. The peer that's
+ahead keeps simulating ticks whose remote input hasn't arrived yet: it predicts
+more, rolls back more, and hits the stall limit first. The one behind barely
+rolls back. Same link, very different experience.
+
+**Estimate** (`session_frame_advantage`): the peer's newest `sender_tick` is
+where it was when it sent. Since then the packet spent about half the RTT in
+flight and has been sitting here since it arrived, and the peer kept ticking:
+
+```
+remote_now = sender_tick + (rtt/2 + (now - arrival_time)) / STEP
+advantage  = next_tick - remote_now
+```
+
+- The arrival-time term matters when packets stop: without it a stale
+  `sender_tick` would make us look further and further ahead.
+- It's called **after** the simulate loop. `sender_tick` is the peer's
+  `next_tick` after it simulated, so ours has to be too. Called before
+  simulating, every estimate came out about 1 tick too low on both sides.
+- Check: the two machines' values should add up to about 0. Measured, they
+  add up to about -0.4 (small leftover frame-timing effects).
+- Returns 0 until there's an estimate: no RTT yet, or the peer's
+  `sender_tick` is still 0 because it hasn't started.
+
+**Correction** (`main.c`): if the advantage is over 1 tick, push `start_time`
+forward by `STEP / 10`. Every later tick is due a little later, so the peer
+that's ahead skips one tick every 10 frames until it's level. Only the peer
+that's ahead adjusts. Changing `start_time` only changes when ticks run, never
+what they compute, so it can't cause a desync.
+
+Measured on a 100 ms / 30 ms jitter / 10% loss link (headless, 15 s):
+
+| | Avg advantage (A / B) | Rollbacks (A / B) |
+|---|---|---|
+| Off | +0.70 / -1.20 | 113 / 43 |
+| On | -0.24 / -0.22 | 92 / 91 |
+
+The total number of rollbacks doesn't drop, since that's set by the latency.
+What changes is that they're shared evenly instead of one player taking most of
+them. Constants were picked by measuring:
+- Threshold 0.5 doubled the nudges with no better balance.
+- Threshold 2 barely fired.
+- A nudge of `STEP / 2` balanced just as well, but runs at visibly half speed
+  while correcting.
 
 ## Disconnect
 
