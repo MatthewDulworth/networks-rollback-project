@@ -120,8 +120,9 @@ static void desync_check_init(const GameState *start) {
     memcpy(&reference_state, start, sizeof reference_state);
 }
 
-// Call after rollback and the advance loop, so every saved snapshot reflects
-// all remote inputs received so far.
+// Call after every tick that advances (never before this frame's rollback), so
+// every saved snapshot reflects all remote inputs received so far, and the
+// reference never falls further behind than the state ring reaches.
 static void desync_check(Tick next_tick) {
     Tick last_confirmed = get_last_confirmed_remote_tick();
 
@@ -313,9 +314,12 @@ int main(int argc, char **argv) {
 
                 elapsed = GetTime() - frame_start;
                 next_tick += 1;
-            }
 
-            desync_check(next_tick);
+                // Every tick, not once per frame: after a long stall one frame
+                // can run more ticks than the state ring holds, and the
+                // snapshots the check still needs would be overwritten.
+                desync_check(next_tick);
+            }
         }
 
         // -------------------------------------------
