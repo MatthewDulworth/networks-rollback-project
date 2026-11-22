@@ -143,6 +143,10 @@ int main(int argc, char **argv) {
         }
         stats_update(frame_start);
 
+        // Set when can_advance stops the simulate loop. Fresh every frame:
+        // whether we're stalled depends on what has arrived this frame.
+        bool stalled = false;
+
         if (started) {
             // Seconds since the match started on this machine.
             double total_time = frame_start - start_time;
@@ -185,6 +189,7 @@ int main(int argc, char **argv) {
                 // of going on to receive, send and render.
                 if (!can_advance(next_tick)) {
                     stats_current.stalled_frames++;
+                    stalled = true;
                     break;
                 }
 
@@ -243,9 +248,14 @@ int main(int argc, char **argv) {
 
         EndDrawing();
 
-        // Before the match starts there are no ticks to line up with, so
-        // just wait one step between frames.
-        double time_til_next_tick = started
+        // Normally: sleep until the next tick is due. That's 0 when we're
+        // behind schedule, so the next frame starts right away and keeps
+        // catching up.
+        // Before the match starts, or while stalled, we're waiting for a
+        // packet, not for the clock. The tick schedule is already in the
+        // past then, so the normal wait would be 0 and the loop would spin
+        // (and send a packet every spin). Wait one step instead.
+        double time_til_next_tick = started && !stalled
             ? MAX(0, next_tick * STEP - (GetTime() - start_time))
             : STEP;
         WaitTime(time_til_next_tick);

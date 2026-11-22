@@ -37,7 +37,7 @@ runs a little behind, and rollback covers the difference.
 | 4. Simulate | Run every tick that's due (see below). | |
 | 5. Send | `session_send`, then `netsim_update` again. | **Every frame**, even while stalled or waiting for the peer (see `networking.md`). |
 | 6. Render | `render_game`, then fill an `OverlayInfo` and `render_overlay`. | Reads the state only. |
-| 7. Wait | Sleep until the next tick is due, then poll input again. | |
+| 7. Wait | Sleep until the next tick is due (one `STEP` while stalled or before the match), then poll input again. | |
 
 ## `process_tick(tick, state, next_state)`
 
@@ -86,8 +86,19 @@ while (total_time >= next_tick * STEP - TICK_THRESHOLD
 
 ## Waiting and polling twice
 
-After drawing, `WaitTime` sleeps until the next tick is due. `EndDrawing`
-already polled input, but that was before the sleep, so `PollInputEvents` is
+After drawing, `WaitTime` sleeps until the next tick is due. That's 0 when
+we're behind schedule, so the next frame starts right away and keeps catching
+up.
+
+**Except while stalled** (or before the match starts): then we're waiting for
+a packet, not for the clock. `next_tick` has stopped but time hasn't, so "until
+the next tick is due" is already in the past and the wait would be 0. The loop
+would spin as fast as the CPU allows, sending a packet every pass: thousands a
+second, enough to fill the netsim queues so they drop packets on their own,
+and `stalls/s` would count passes instead of frames. A `stalled` flag, set at
+the `can_advance` break, makes those frames wait one `STEP` instead.
+
+`EndDrawing` already polled input, but that was before the sleep, so `PollInputEvents` is
 called again to make the next frame's input fresh.
 
 Polling twice per frame breaks raylib's `IsKeyPressed`/`IsKeyReleased` (the
