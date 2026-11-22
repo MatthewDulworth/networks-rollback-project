@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include <math.h>
 #include <stdio.h>
 #include "sim/sim.h"
 #include "rollback/sync_check.h"
@@ -58,6 +59,11 @@ int main(int argc, char **argv) {
     int monitor_width = GetMonitorWidth(GetCurrentMonitor());
     SetWindowPosition(args.player == PLAYER_1 ? 0 : monitor_width - MAP_PIXEL_WIDTH, 60);
 
+    // The game always draws at MAP_PIXEL_WIDTH x MAP_PIXEL_HEIGHT into this
+    // off-screen texture, which is then scaled up to fit whatever size the
+    // window is. So the sim and renderer never need to know about fullscreen.
+    RenderTexture2D canvas = LoadRenderTexture(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT);
+
     match_init(args.player, args.delay_mode, GetTime);
 
     while (!WindowShouldClose()) {
@@ -68,6 +74,7 @@ int main(int argc, char **argv) {
         // windows click the one you want to play.
         Input local_input = read_local_input();
         handle_netsim_hotkeys();
+        handle_window_hotkeys();
 
         // -------------------------------------------
         // Receive, rollback, simulate, send
@@ -77,10 +84,24 @@ int main(int argc, char **argv) {
         // -------------------------------------------
         // Render
         // -------------------------------------------
-        BeginDrawing();
+        BeginTextureMode(canvas);
         ClearBackground(RAYWHITE);
 
         render_game(match_state());
+        EndTextureMode();
+
+        // Scale the canvas as large as fits while keeping its shape, centred,
+        // with black bars filling the rest (letterboxing).
+        BeginDrawing();
+        ClearBackground(BLACK);
+        float scale = fminf((float)GetScreenWidth() / MAP_PIXEL_WIDTH,
+                            (float)GetScreenHeight() / MAP_PIXEL_HEIGHT);
+        float w = MAP_PIXEL_WIDTH * scale;
+        float h = MAP_PIXEL_HEIGHT * scale;
+        Rectangle dest = { (GetScreenWidth() - w) / 2, (GetScreenHeight() - h) / 2, w, h };
+        // Negative source height: OpenGL textures are stored upside down.
+        Rectangle source = { 0, 0, MAP_PIXEL_WIDTH, -MAP_PIXEL_HEIGHT };
+        DrawTexturePro(canvas.texture, source, dest, (Vector2){ 0, 0 }, 0, WHITE);
 
         // Everything the overlay shows, gathered here so the renderer only
         // draws and never reaches into the network or rollback modules.
@@ -100,9 +121,11 @@ int main(int argc, char **argv) {
             .disconnected = session_disconnected(GetTime()),
             .frame_advantage = match_frame_advantage(),
             .delay_mode = match_delay_mode(),
+            .show_stats = input_stats_visible(),
         };
+        // After the canvas, straight onto the screen, so it's drawn at the
+        // real resolution on top of the game instead of being scaled with it.
         render_overlay(&info);
-
         EndDrawing();
 
         // -------------------------------------------
@@ -118,6 +141,7 @@ int main(int argc, char **argv) {
     }
 
     net_shutdown();
+    UnloadRenderTexture(canvas);
     CloseWindow();
     return 0;
 }

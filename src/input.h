@@ -12,3 +12,10 @@ Input read_local_input(void);
 // Number keys change the network simulator live: 1/2 lag, 3/4 jitter,
 // 5/6 loss, 0 resets everything.
 void handle_netsim_hotkeys(void);
+
+// Enter toggles fullscreen (borderless, covering the whole monitor).
+// Tab shows or hides the debug stats overlay.
+void handle_window_hotkeys(void);
+
+// Whether the debug stats overlay is currently switched on (Tab).
+bool input_stats_visible(void);

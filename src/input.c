@@ -55,3 +55,23 @@ void handle_netsim_hotkeys(void) {
     if (key_went_down(KEY_ZERO))  memset(&s, 0, sizeof s);
     netsim_set(s);  // clamps, so going below 0 or above the max is harmless
 }
+
+// --------------------------------------------------------
+// Window hotkeys
+// --------------------------------------------------------
+
+// The debug stats start visible: during development they're what you want.
+static bool stats_visible = true;
+
+bool input_stats_visible(void) {
+    return stats_visible;
+}
+
+void handle_window_hotkeys(void) {
+    if (key_went_down(KEY_TAB)) stats_visible = !stats_visible;
+
+    // Borderless windowed rather than ToggleFullscreen: true fullscreen
+    // changes the monitor's resolution, which is slow and flickery (especially
+    // on macOS). Borderless just grows the window to cover the screen.
+    if (key_went_down(KEY_ENTER)) ToggleBorderlessWindowed();
+}

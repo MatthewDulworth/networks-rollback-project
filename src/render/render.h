@@ -27,7 +27,10 @@ typedef struct {
     bool disconnected;
     double frame_advantage;  // ticks ahead of the peer; 0 before an estimate
     bool delay_mode;         // delay-based netcode instead of rollback
+    bool show_stats;         // false hides the stats; banners always show
 } OverlayInfo;
 
-// Debug overlay (top left) and the waiting / disconnected banners.
+// Debug overlay (top left) and the waiting / disconnected banners. Drawn
+// straight to the screen at its real resolution, not into the scaled game
+// canvas, so the text stays sharp and small in fullscreen.
 void render_overlay(const OverlayInfo *info);

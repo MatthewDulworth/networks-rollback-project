@@ -106,7 +106,13 @@ void render_game(const GameState *state) {
 // Overlay
 // --------------------------------------------------------
 
-void render_overlay(const OverlayInfo *info) {
+// The debug stats, top left. Hidden and shown with Tab.
+static void render_stats(const OverlayInfo *info) {
+    // Pale backing panel: in fullscreen the stats can land on the black
+    // letterbox bar, where dark gray text would be unreadable. Sized to fit
+    // the lines below.
+    DrawRectangle(0, 0, 600, 134, Fade(RAYWHITE, 0.85f));
+
     int y = 10;
     // Ping, then frame advantage on the same line: positive means this
     // machine is ahead of the peer (and slowing down to let it catch up).
@@ -136,7 +142,7 @@ void render_overlay(const OverlayInfo *info) {
                         s->lag_ms, s->jitter_ms, s->loss_pct, info->netsim_dropped),
              10, y, 20, s->lag_ms || s->jitter_ms || s->loss_pct ? MAROON : DARKGRAY);
     y += 24;
-    DrawText("keys: 1/2 lag   3/4 jitter   5/6 loss   0 reset", 10, y, 10, GRAY);
+    DrawText("keys: 1/2 lag   3/4 jitter   5/6 loss   0 reset   Enter fullscreen   Tab hide stats", 10, y, 10, GRAY);
     y += 14;
     DrawText(TextFormat("me %s   peer %s", info->local_addr, info->peer_addr), 10, y, 10, GRAY);
     y += 14;
@@ -150,6 +156,12 @@ void render_overlay(const OverlayInfo *info) {
     } else {
         DrawText("sync --", 10, y, 20, GRAY);
     }
+}
+
+void render_overlay(const OverlayInfo *info) {
+    if (info->show_stats) {
+        render_stats(info);
+    }
 
     // Centered banners for states where the game isn't running normally.
     const char *banner = NULL;
@@ -160,7 +172,9 @@ void render_overlay(const OverlayInfo *info) {
     }
     if (banner != NULL) {
         int width = MeasureText(banner, 30);
-        DrawText(banner, (MAP_PIXEL_WIDTH - width) / 2, MAP_PIXEL_HEIGHT / 2 - 15, 30,
+        // Screen size, not map size: the overlay is drawn at the window's
+        // real resolution, which in fullscreen is much bigger than the map.
+        DrawText(banner, (GetScreenWidth() - width) / 2, GetScreenHeight() / 2 - 15, 30,
                  info->disconnected ? RED : GRAY);
     }
 }
