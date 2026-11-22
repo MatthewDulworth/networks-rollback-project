@@ -181,7 +181,7 @@ Top left of the window:
 | Line | Meaning |
 |---|---|
 | ping, advantage | Smoothed RTT, above. Frame advantage in ticks, below: positive means this machine is ahead. |
-| rollbacks/s, max depth, stalls/s | Counted over one-second windows; the last finished window is shown so the numbers don't flicker. Depth is how many ticks were re-simulated (at most `MAX_ROLLBACK`, 8). A stall is a frame that hit the rollback limit and stopped advancing. |
+| rollbacks/s, max depth, stalls/s (or DELAY MODE, stalls/s) | Counted over one-second windows; the last finished window is shown so the numbers don't flicker. Depth is how many ticks were re-simulated (at most `MAX_ROLLBACK`, 8). A stall is a frame that hit the rollback limit and stopped advancing. |
 | sim lag / jitter / loss (dropped) | Current netsim settings (red when any are on) and how many packets it has dropped. |
 | me / peer | This machine's address and port, and the peer's. |
 
@@ -265,6 +265,65 @@ them. Constants were picked by measuring:
 - A nudge of `STEP / 2` balanced just as well, but runs at visibly half speed
   while correcting.
 
+## Delay mode (`--delay`)
+
+The old way of doing netcode, kept for comparison. Never predict: a tick only
+runs once the peer's input for it has arrived. The only code difference is
+`may_simulate` in `match.c`, which asks for zero guessed ticks
+(`tick <= last_confirmed_remote_tick`) instead of `can_advance`'s up to
+`MAX_ROLLBACK`. Nothing is ever mispredicted, so nothing ever rolls back, and
+when input is late the game stalls instead.
+
+- Same `INPUT_DELAY` (3 ticks) as rollback, so the comparison only changes
+  one thing. Delay mode plays smoothly as long as the peer's input arrives
+  within those 3 ticks (about 50 ms one way, minus jitter). After that it
+  stalls.
+- `--lag` is the round trip, so `--lag 100` is 50 ms each way.
+- Under steady lag it plays slower than real time: my tick `t` needs the
+  peer's input for `t`, which the peer sent at its tick `t - 3`, which needed my
+  input from my tick `t - 6`. So at most 6 ticks per round trip, which works
+  out to 30 ticks/s (half speed) at a 200 ms RTT.
+- It only changes *when* ticks run, never what they compute, so it can't
+  desync and the hash check still applies. The two peers don't even have to
+  use the same mode.
+- The overlay shows "DELAY MODE" and stalls/s, and the window title says so.
+
+`tests/smoothness_test.c` measures the difference. Each row is the worse
+of the two players. "Speed" is game ticks per real second as a share of 60,
+"frozen" is frames where no tick ran, and latency runs from sampling the
+keyboard until that input shows on screen. One run:
+
+| RTT | Mode | Speed | Frozen | Longest freeze | Input latency avg / max |
+|---|---|---|---|---|---|
+| clean, 50 ms | both | 100% | 0% | 18 ms | 50 / 52 ms |
+| 100 ms | rollback | 100% | 0% | 19 ms | 50 / 53 ms |
+| | delay | 81% | 14-53% | 38-89 ms | 62 / 74 ms |
+| 200 ms | rollback | 100% | 0% | 19 ms | 50 / 53 ms |
+| | delay | 43% | 57% | 106 ms | 115 / 159 ms |
+| 200 ms, 30 jitter, 10% loss | rollback | 100% | 0% | 19 ms | 50 / 54 ms |
+| | delay | 41% | 82% | 248 ms | 121 / 248 ms |
+| 500 ms | rollback | 67% | 29-44% | 107 ms | 75 / 147 ms |
+| | delay | 18% | 81% | 250 ms | 275 / 290 ms |
+
+- Up to 50 ms RTT, the 3-tick input delay hides the whole trip, and the two
+  modes are identical. Rollback costs nothing when there's nothing to hide.
+- From 100 ms, delay mode slows down and freezes while rollback stays at full
+  speed with a steady 50 ms of input latency. The price is about 6-7
+  rollbacks a second, which delay mode never needs.
+- At 500 ms, rollback is past its own limit too. Then
+  `INPUT_DELAY + MAX_ROLLBACK` = 11 ticks of slack each way gives at most 22
+  ticks per round trip (73%), so it stalls as well, but much less.
+- Delay mode breaks down at 100 ms RTT, before the theoretical 50 ms one
+  way. Netsim rounds delays up to whole frames, and a packet sent at the end
+  of one frame is only read at the start of a later one, so the real trip is a
+  frame or two longer than the setting.
+
+```sh
+scripts/player1.sh <other_machine_ip> --lag 100 --delay
+```
+
+Restart both games to switch modes.
+
 ## Disconnect
 
 `last_packet_time` updates whenever a valid packet arrives. After 3 seconds
@@ -280,7 +339,7 @@ scripts/player2.sh <other_machine_ip>     # machine B
 ```
 
 These build, then run `./build/game 5000 <other_machine_ip> 5000 <0 or 1>`.
-Extra flags (`--lag`, `--jitter`, `--loss`) are passed through.
+Extra flags (`--lag`, `--jitter`, `--loss`, `--delay`) are passed through.
 
 - Both can use the same port, since they're different machines. Players must
   be opposite (0 and 1).

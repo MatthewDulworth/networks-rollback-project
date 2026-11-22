@@ -97,11 +97,12 @@ Run the tests with `ctest --test-dir build --output-on-failure`:
 | Test | What it checks | Time |
 |---|---|---|
 | `packet` | Encoding and decoding packets, rejecting bad ones. | instant |
-| `netcode` | End to end: for each of three links (clean; 100 ms + 10% loss; 250 ms + 20% loss) it starts two real peers on localhost and plays 8 s with scripted random input. Fails on a desync between the peers, a failed assert (including the local desync check), a peer that doesn't finish, hashes that stop being compared, no rollbacks on a lossy link, or a loop that spins instead of sleeping. | ~10 s |
+| `netcode` | End to end: for each of four links (clean; 100 ms + 10% loss; 250 ms + 20% loss; delay mode at 60 ms + 10% loss) it starts two real peers on localhost and plays 8 s with scripted random input. Fails on a desync between the peers, a failed assert (including the local desync check), a peer that doesn't finish, hashes that stop being compared, no rollbacks on a lossy link (or any in delay mode), or a loop that spins instead of sleeping. | ~10 s |
+| `smoothness` | Rollback vs delay mode on the same links (clean, 50, 100, 200, 500 ms RTT, and 200 ms with jitter and loss). Measures game speed, frozen frames, longest freeze and input latency, prints a table, and fails unless the modes match on a clean or 50 ms link and rollback is clearly smoother from 100 ms up. | ~10 s |
 
-The netcode test needs UDP ports 47100-47105 to be free. Run with
+The netcode tests need UDP ports 47100-47107 and 47200-47221 to be free. Run
 `./build/netcode_test` to see each peer's numbers (rollbacks, depth, stalls,
-frames per second).
+frames per second), and `./build/smoothness_test` for the comparison table.
 
 You only need the configure step the first time, or after deleting `build/`.
 After that, `cmake --build build` is enough. It re-runs the configure step

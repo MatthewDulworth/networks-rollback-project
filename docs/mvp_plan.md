@@ -68,7 +68,7 @@ determinism mistake immediately.
 - Short pause, reset positions, first to 3 kills wins.
 - HUD for health, ammo and kills. A couple of platforms on the map.
 
-## Phase 3: Networking extras, in order of value (6, 7 and 8 done)
+## Phase 3: Networking extras, in order of value (all done)
 
 **6. Packet format v2** (magic `RBF2`): add the sender's current tick and a
 `(hash_tick, hash)` pair, so the format only changes once.
@@ -84,7 +84,7 @@ machines agree, which the local desync check can't.
 
 **9. Delay-based mode** (`--delay`): only advance ticks whose inputs are
 confirmed. Allows a side-by-side comparison with rollback under the same
-network conditions.
+network conditions. See "Delay mode" in `networking.md`.
 
 ## Nice to have
 
@@ -103,6 +103,6 @@ next steps:
 1. Two laptops, clean connection: play for a bit, point out zero or few rollbacks.
 2. Add 100 ms of lag: still responsive, rollback counter climbs.
 3. Add 10% loss: still playable, resends absorb it.
-4. If step 9 is done: switch to delay mode with the same settings and show it
-   feels sluggish.
+4. Restart both with `--delay` and the same network settings: show it stalls
+   and feels sluggish.
 5. Point to the hash check staying green the whole time.
