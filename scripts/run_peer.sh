@@ -2,7 +2,7 @@
 # Build, then run this machine's side of a two-machine match. Called by
 # player1.sh / player2.sh; use those instead of running this directly.
 #
-# Usage: scripts/run_peer.sh <player 0|1> <peer_ip> [--lag ms] [--jitter ms] [--loss pct]
+# Usage: scripts/run_peer.sh <player 0|1> <peer_ip> [--lag ms] [--jitter ms] [--loss pct] [--delay]
 #
 # Both machines use port 5000. That's fine because they're different
 # machines; on one machine use run_local.sh instead.
@@ -33,7 +33,7 @@ local_ip() {
 if [ "$#" -lt 2 ]; then
     echo "This machine's IP: $(local_ip)"
     echo "Give it to the other player, get theirs, then run:"
-    echo "  scripts/player$(( ${1:-0} + 1 )).sh <other_machine_ip> [--lag ms] [--jitter ms] [--loss pct]"
+    echo "  scripts/player$(( ${1:-0} + 1 )).sh <other_machine_ip> [--lag ms] [--jitter ms] [--loss pct] [--delay]"
     exit 1
 fi
 PLAYER="$1"

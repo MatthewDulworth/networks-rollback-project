@@ -30,6 +30,9 @@
 
 static MatchClock now;
 
+// See match_init in match.h.
+static bool delay_mode;
+
 static GameState state;
 static GameState next_state;
 static Tick next_tick;
@@ -101,8 +104,20 @@ static void process_tick(Tick tick) {
     memcpy(&state, &next_state, sizeof state);
 }
 
-void match_init(int local_player, MatchClock clock) {
+// Whether `tick` may be simulated now, given the remote inputs that have
+// arrived. The only place the two modes differ.
+static bool may_simulate(Tick tick) {
+    if (delay_mode) {
+        // Every input for the tick is here: no guessing at all. Stricter
+        // than can_advance (zero guessed ticks instead of MAX_ROLLBACK).
+        return tick <= get_last_confirmed_remote_tick();
+    }
+    return can_advance(tick);
+}
+
+void match_init(int local_player, bool delay, MatchClock clock) {
     now = clock;
+    delay_mode = delay;
     next_tick = 0;
     sim_init(&state);
     memcpy(&next_state, &state, sizeof next_state);
@@ -178,11 +193,12 @@ void match_frame(Input local_input) {
         while (
             total_time >= next_tick * STEP - TICK_THRESHOLD
             && elapsed < (STEP - CATCHUP_MARGIN)) {
-            // Too many ticks would be running on guessed remote input: stop
-            // advancing this frame. `break`, not `continue`: the time
-            // condition is still true, so `continue` would spin here instead
-            // of going on to send and render.
-            if (!can_advance(next_tick)) {
+            // Too many ticks would be running on guessed remote input (in
+            // delay mode: any at all): stop advancing this frame. `break`,
+            // not `continue`: the time condition is still true, so
+            // `continue` would spin here instead of going on to send and
+            // render.
+            if (!may_simulate(next_tick)) {
                 stats_note_stall();
                 stalled = true;
                 break;
@@ -249,6 +265,10 @@ double match_time_until_next_frame(void) {
 
 const GameState *match_state(void) {
     return &state;
+}
+
+bool match_delay_mode(void) {
+    return delay_mode;
 }
 
 bool match_started(void) {

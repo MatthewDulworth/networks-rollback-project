@@ -28,7 +28,16 @@ typedef struct {
 // Start a new match on this machine as local_player (PLAYER_1 or PLAYER_2,
 // opposite on the two peers). Resets the sim, rollback, sync check and
 // session modules.
-void match_init(int local_player, MatchClock clock);
+//
+// delay_mode: never predict. A tick only runs once the peer's input for it
+// has arrived, so there are no rollbacks, and the game stalls instead
+// whenever input is late. For comparing against rollback under the same
+// network conditions. Only changes when ticks run, not what they compute,
+// so the two peers don't have to use the same mode.
+void match_init(int local_player, bool delay_mode, MatchClock clock);
+
+// Whether this match was started in delay mode.
+bool match_delay_mode(void);
 
 // Run one frame with this frame's keyboard sample.
 void match_frame(Input local_input);

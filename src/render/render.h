@@ -26,6 +26,7 @@ typedef struct {
     bool peer_seen;
     bool disconnected;
     double frame_advantage;  // ticks ahead of the peer; 0 before an estimate
+    bool delay_mode;         // delay-based netcode instead of rollback
 } OverlayInfo;
 
 // Debug overlay (top left) and the waiting / disconnected banners.

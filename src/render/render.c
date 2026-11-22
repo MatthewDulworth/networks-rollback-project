@@ -118,9 +118,17 @@ void render_overlay(const OverlayInfo *info) {
         DrawText("ping --", 10, y, 20, DARKGRAY);
     }
     y += 22;
-    DrawText(TextFormat("rollbacks/s %d   max depth %d   stalls/s %d",
-                        info->rollbacks, info->max_depth, info->stalled_frames),
-             10, y, 20, DARKGRAY);
+    // Mode first on the line, so it's obvious which netcode a side-by-side
+    // comparison is looking at. Delay mode never rolls back, so its line is
+    // all about stalls.
+    if (info->delay_mode) {
+        DrawText(TextFormat("DELAY MODE   stalls/s %d", info->stalled_frames),
+                 10, y, 20, MAROON);
+    } else {
+        DrawText(TextFormat("rollbacks/s %d   max depth %d   stalls/s %d",
+                            info->rollbacks, info->max_depth, info->stalled_frames),
+                 10, y, 20, DARKGRAY);
+    }
     y += 22;
 
     const NetsimSettings *s = &info->netsim;

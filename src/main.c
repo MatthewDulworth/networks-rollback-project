@@ -36,15 +36,16 @@ int main(int argc, char **argv) {
     snprintf(peer_addr, sizeof peer_addr, "%s:%u", args.peer_ip, args.peer_port);
 
     char title[64];
-    snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)",
-             args.player + 1, args.player == PLAYER_1 ? "blue" : "red");
+    snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)%s",
+             args.player + 1, args.player == PLAYER_1 ? "blue" : "red",
+             args.delay_mode ? " - DELAY MODE" : "");
     InitWindow(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT, title);
     // Two local peers: put player 1 on the left edge, player 2 on the right,
     // so the windows don't start on top of each other.
     int monitor_width = GetMonitorWidth(GetCurrentMonitor());
     SetWindowPosition(args.player == PLAYER_1 ? 0 : monitor_width - MAP_PIXEL_WIDTH, 60);
 
-    match_init(args.player, GetTime);
+    match_init(args.player, args.delay_mode, GetTime);
 
     while (!WindowShouldClose()) {
         // -------------------------------------------
@@ -85,6 +86,7 @@ int main(int argc, char **argv) {
             .peer_seen = match_started(),
             .disconnected = session_disconnected(GetTime()),
             .frame_advantage = match_frame_advantage(),
+            .delay_mode = match_delay_mode(),
         };
         render_overlay(&info);
 

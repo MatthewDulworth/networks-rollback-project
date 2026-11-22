@@ -27,12 +27,19 @@ static bool parse_non_negative(const char *text, int *out) {
 }
 
 bool parse_args(int argc, char **argv, Args *args) {
-    // Four positional arguments, then any number of "--flag value" pairs.
+    // Four positional arguments, then any number of "--flag value" pairs
+    // and value-less switches (--delay).
     if (argc < 5) {
         return false;
     }
     memset(&args->netsim, 0, sizeof args->netsim);
-    for (int i = 5; i < argc; i += 2) {
+    args->delay_mode = false;
+    // One argument per step; a flag with a value consumes its value too.
+    for (int i = 5; i < argc; i++) {
+        if (strcmp(argv[i], "--delay") == 0) {
+            args->delay_mode = true;
+            continue;
+        }
         if (i + 1 >= argc) {
             return false;  // flag with no value after it
         }
@@ -49,6 +56,7 @@ bool parse_args(int argc, char **argv, Args *args) {
         if (!parse_non_negative(argv[i + 1], field)) {
             return false;
         }
+        i++;  // skip the value
     }
 
     args->peer_ip = argv[2];
@@ -69,8 +77,9 @@ bool parse_args(int argc, char **argv, Args *args) {
 void print_usage(const char *program) {
     fprintf(stderr,
             "usage: %s <local_port> <peer_ip> <peer_port> <player 0|1>"
-            " [--lag ms] [--jitter ms] [--loss pct]\n"
+            " [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
             "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n"
-            "  --lag/--jitter/--loss simulate a bad connection (both directions)\n",
+            "  --lag/--jitter/--loss simulate a bad connection (both directions)\n"
+            "  --delay uses delay-based netcode instead of rollback (no prediction)\n",
             program, program);
 }

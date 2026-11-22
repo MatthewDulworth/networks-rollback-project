@@ -10,13 +10,15 @@
 // - never see different state hashes from the two machines (sync_check),
 // - kept comparing hashes until near the end (so the check really ran),
 // - rolled back at least once on a lossy link (so rollback was exercised),
+// - in delay mode: never rolled back (nothing is predicted) and stalled at
+//   least once (so it really waited for late input),
 // - ran at about 60 frames a second, not faster (the old bug where a
 //   stalled loop stopped sleeping and spun),
 // - and didn't trip any assert, including the local desync check
 //   (an assert kills the process, which the parent reports).
 //
 // Takes about 10 s: scenarios run in parallel, in real time. Needs to bind
-// UDP ports 47100-47105 on localhost.
+// UDP ports 47100-47107 on localhost.
 //
 // Run with `ctest --test-dir build` (or ./build/netcode_test).
 
@@ -40,12 +42,17 @@ typedef struct {
     const char *name;
     NetsimSettings netsim;  // applied on player 1's machine only
     bool expect_rollbacks;
+    bool delay_mode;        // both peers use delay-based netcode
 } Scenario;
 
+// The delay-mode link is milder than the rollback ones: delay mode runs at
+// most 2 * INPUT_DELAY ticks per round trip, so a 200 ms round trip would
+// play at half speed and take ~16 s to reach TARGET_TICKS.
 static const Scenario scenarios[] = {
-    { "clean",                         { 0, 0, 0 },     false },
-    { "100 ms, 30 ms jitter, 10% loss", { 100, 30, 10 }, true },
-    { "250 ms, 40 ms jitter, 20% loss", { 250, 40, 20 }, true },
+    { "clean",                          { 0, 0, 0 },     false, false },
+    { "100 ms, 30 ms jitter, 10% loss", { 100, 30, 10 }, true,  false },
+    { "250 ms, 40 ms jitter, 20% loss", { 250, 40, 20 }, true,  false },
+    { "delay mode, 60 ms, 20 ms jitter, 10% loss", { 60, 20, 10 }, false, true },
 };
 #define NUM_SCENARIOS ((int)(sizeof scenarios / sizeof scenarios[0]))
 
@@ -97,7 +104,7 @@ static int run_peer(int index, int player) {
     netsim_init();
     NetsimSettings off = { 0, 0, 0 };
     netsim_set(player == PLAYER_1 ? sc->netsim : off);
-    match_init(player, clock_now);
+    match_init(player, sc->delay_mode, clock_now);
 
     rng_state = 0x9E3779B9u ^ (uint32_t)(index * 7919 + player * 104729 + 1);
     Input input = 0;
@@ -158,6 +165,16 @@ static int run_peer(int index, int player) {
     if (last_match < TARGET_TICKS - 60) {
         fprintf(stderr, "%s FAIL: hashes were last compared at tick %d, "
                 "should be near %d\n", tag, last_match, TARGET_TICKS);
+        failures++;
+    }
+    if (sc->delay_mode && stats.rollbacks > 0) {
+        fprintf(stderr, "%s FAIL: %d rollbacks in delay mode, which should "
+                "never predict\n", tag, stats.rollbacks);
+        failures++;
+    }
+    if (sc->delay_mode && stats.stalled_frames == 0) {
+        fprintf(stderr, "%s FAIL: delay mode never stalled on a laggy link, "
+                "so it didn't wait for input\n", tag);
         failures++;
     }
     if (sc->expect_rollbacks && stats.rollbacks == 0) {
