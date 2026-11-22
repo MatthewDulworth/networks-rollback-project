@@ -147,6 +147,14 @@ bool net_connect(NetAddr peer_addr) {
     return true;
 }
 
+// An interface that can reach other machines on the LAN: up, has a link,
+// can multicast, and isn't loopback (lo0) or a point-to-point tunnel (utun:
+// VPNs, iCloud Private Relay).
+static bool lan_interface(unsigned flags) {
+    return (flags & IFF_UP) && (flags & IFF_RUNNING) && (flags & IFF_MULTICAST)
+        && !(flags & (IFF_LOOPBACK | IFF_POINTOPOINT));
+}
+
 int net_join_multicast(const char *group, uint16_t port, NetAddr *dests, int max) {
     struct in6_addr group_addr;
     if (inet_pton(AF_INET6, group, &group_addr) != 1) {
@@ -171,12 +179,8 @@ int net_join_multicast(const char *group, uint16_t port, NetAddr *dests, int max
         if (!IN6_IS_ADDR_LINKLOCAL(&addr->sin6_addr)) {
             continue;
         }
-        unsigned flags = ifa->ifa_flags;
-        if (!(flags & IFF_UP) || !(flags & IFF_RUNNING) || !(flags & IFF_MULTICAST)) {
-            continue;  // down, no link, or can't multicast
-        }
-        if (flags & (IFF_LOOPBACK | IFF_POINTOPOINT)) {
-            continue;  // lo0, or a tunnel (utun = VPNs, iCloud Private Relay)
+        if (!lan_interface(ifa->ifa_flags)) {
+            continue;
         }
         unsigned index = if_nametoindex(ifa->ifa_name);
         if (index == 0) {
@@ -315,7 +319,7 @@ void net_addr_to_string(NetAddr addr, char *out, size_t capacity) {
     snprintf(out, capacity, "[%s%s]:%u", text, scope, addr.port);
 }
 
-void net_local_ip(char *out, size_t capacity) {
+void net_local_addr(uint16_t port, char *out, size_t capacity) {
     snprintf(out, capacity, "unknown");
 
     // getifaddrs gives a linked list of every address on every network
@@ -324,16 +328,46 @@ void net_local_ip(char *out, size_t capacity) {
     if (getifaddrs(&list) != 0) {
         return;
     }
-    for (struct ifaddrs *ifa = list; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET) {
-            continue;  // no address, or not IPv4
+
+    // First choice: a real IPv4 address, the easiest to read off and type.
+    // Second: the IPv6 link-local address, what LAN discovery connects to.
+    bool have_v4 = false;
+    bool have_v6 = false;
+    NetAddr v4 = { .port = port };
+    NetAddr v6 = { .port = port };
+    for (struct ifaddrs *ifa = list; ifa != NULL && !have_v4; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL || !lan_interface(ifa->ifa_flags)) {
+            continue;
         }
-        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) {
-            continue;  // interface down, or 127.0.0.1
+        if (ifa->ifa_addr->sa_family == AF_INET) {
+            const struct sockaddr_in *addr = (const struct sockaddr_in *)ifa->ifa_addr;
+            // 192.0.0.x is reserved. On an IPv6-only network (some phone
+            // hotspots) macOS gives itself 192.0.0.2 for its IPv4-to-IPv6
+            // translator (CLAT). Every machine gets the same one, so it's
+            // no use to the other player.
+            const uint8_t *bytes = (const uint8_t *)&addr->sin_addr.s_addr;
+            if (bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 0) {
+                continue;
+            }
+            map_ipv4(&addr->sin_addr, v4.ip);
+            have_v4 = true;
+        } else if (ifa->ifa_addr->sa_family == AF_INET6 && !have_v6) {
+            const struct sockaddr_in6 *addr = (const struct sockaddr_in6 *)ifa->ifa_addr;
+            if (!IN6_IS_ADDR_LINKLOCAL(&addr->sin6_addr)) {
+                continue;
+            }
+            memcpy(v6.ip, &addr->sin6_addr, 16);
+            // getifaddrs may leave the scope id 0 for link-local addresses,
+            // so look up the interface by name instead.
+            v6.scope_id = if_nametoindex(ifa->ifa_name);
+            have_v6 = true;
         }
-        const struct sockaddr_in *addr = (const struct sockaddr_in *)ifa->ifa_addr;
-        inet_ntop(AF_INET, &addr->sin_addr, out, (socklen_t)capacity);
-        break;
     }
     freeifaddrs(list);
+
+    if (have_v4) {
+        net_addr_to_string(v4, out, capacity);
+    } else if (have_v6) {
+        net_addr_to_string(v6, out, capacity);
+    }
 }

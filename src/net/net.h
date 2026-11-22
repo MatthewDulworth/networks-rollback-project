@@ -72,8 +72,10 @@ bool net_send(const uint8_t *data, size_t len);
 // should be at least the largest packet you ever send.
 int net_receive(uint8_t *buf, size_t capacity);
 
-// Write this machine's LAN IPv4 address (dotted, e.g. "192.168.1.5") into
-// out, for showing on screen so the other player knows what to connect to.
-// Picks the first interface that is up, isn't loopback and has an IPv4
-// address. Writes "unknown" if there is none.
-void net_local_ip(char *out, size_t capacity);
+// Write this machine's LAN address and port into out (e.g.
+// "192.168.1.5:5000"), for showing on screen so the other player knows what
+// to connect to. Prefers IPv4 on an interface that can reach the LAN,
+// skipping the 192.0.0.x address macOS invents on IPv6-only networks.
+// Otherwise the IPv6 link-local address ("[fe80::1%en0]:5000"). Writes
+// "unknown" if there is neither.
+void net_local_addr(uint16_t port, char *out, size_t capacity);

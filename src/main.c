@@ -45,10 +45,8 @@ int main(int argc, char **argv) {
     netsim_init();
     netsim_set(args.netsim);
 
-    char local_ip[64];
-    net_local_ip(local_ip, sizeof local_ip);
     char local_addr[80];
-    snprintf(local_addr, sizeof local_addr, "%s:%u", local_ip, args.local_port);
+    net_local_addr(args.local_port, local_addr, sizeof local_addr);
 
     char title[64];
     snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)%s",
