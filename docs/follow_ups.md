@@ -18,7 +18,7 @@ Refs: https://gafferongames.com/post/fix_your_timestep/, https://docs.rs/crate/g
 
 ## Shared start time (tick 0)
 
-**Status: open.** For now each peer starts when the first packet arrives (see `main_loop.md`). Frame-advantage sync is MVP plan step 8.
+**Status: open.** For now each peer starts when the first packet arrives (see `main_loop.md`). Frame-advantage sync (done, see "Frame advantage" in `networking.md`) absorbs the startup error.
 
 Each peer's `GetTime()` is its own local clock, so "start at time T" first needs the clock offset. The NTP-style estimate assumes equal delay in both directions, and any asymmetry becomes error you can't measure.
 
@@ -51,7 +51,7 @@ Use a fixed ring buffer, not the heap. History is bounded by MAX_ROLLBACK (~8–
 
 ## Stalling at the rollback limit
 
-**Status: done**, including resending every frame. Frame-advantage sync is still open (MVP plan step 8).
+**Status: done**, including resending every frame, and frame-advantage sync on top (see "Frame advantage" in `networking.md`).
 
 Don't advance when `next_tick - last_confirmed_remote_tick > MAX_ROLLBACK`. You can't see the peer's actual tick, only their last confirmed input. That one check covers both a slow peer and lost/late packets.
 
