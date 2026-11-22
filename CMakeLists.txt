@@ -35,7 +35,7 @@ endfunction()
 # --------------------------------------------------------
 # Game
 # --------------------------------------------------------
-add_executable(game src/main.c src/sim/sim.c src/rollback/rollback.c src/rollback/sync_check.c src/net/packet.c src/net/net.c src/net/netsim.c src/net/session.c)
+add_executable(game src/main.c src/sim/sim.c src/rollback/rollback.c src/rollback/sync_check.c src/net/packet.c src/net/net.c src/net/netsim.c src/net/session.c src/render/render.c)
 target_link_libraries(game PRIVATE raylib)
 apply_project_flags(game)
 
