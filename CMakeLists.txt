@@ -69,3 +69,11 @@ add_executable(netcode_test tests/netcode_test.c ${CORE_SOURCES})
 apply_project_flags(netcode_test)
 add_test(NAME netcode COMMAND netcode_test)
 set_tests_properties(netcode PROPERTIES TIMEOUT 60)
+
+# Rollback vs delay mode under the same simulated network conditions:
+# prints a comparison table and checks rollback is smoother where it
+# should be. ~10 s, real time.
+add_executable(smoothness_test tests/smoothness_test.c ${CORE_SOURCES})
+apply_project_flags(smoothness_test)
+add_test(NAME smoothness COMMAND smoothness_test)
+set_tests_properties(smoothness PROPERTIES TIMEOUT 60)
