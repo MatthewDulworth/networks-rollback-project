@@ -37,7 +37,7 @@
 #define BULLET_SIZE (8 * SUB_PIXEL_FACTOR)
 
 // Rules the renderer also needs (for the HUD).
-#define MAX_HEALTH 3
+#define MAX_HEALTH 2
 #define MAGAZINE_SIZE 3
 #define RELOAD_TICKS 90
 #define SHOOT_STARTUP_TICKS 6  // from pressing fire to the bullet appearing

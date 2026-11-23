@@ -119,8 +119,8 @@ already in startup still comes out.
 ## HUD (`render_game()` in `src/render/render.c`)
 
 - Bullets in their owner's color.
-- Player flickers while in hitstun. After the first hit the body is faded
-  with a crack drawn across it.
+- Player flickers while in hitstun. After the first hit (2 health, so one
+  hit left) the body is faded with a crack drawn across it.
 - The aim arrow is also the ammo display: a row of `MAGAZINE_SIZE` chevrons
   pointing where a shot fired now would go (from `sim_aim_velocity()` and the
   player's latest input, so it uses the same rules as the sim). Loaded rounds
