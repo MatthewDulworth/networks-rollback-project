@@ -38,7 +38,7 @@
 
 // Rules the renderer also needs (for the HUD).
 #define MAX_HEALTH 2
-#define MAGAZINE_SIZE 3
+#define MAGAZINE_SIZE 1
 #define RELOAD_TICKS 90
 #define SHOOT_STARTUP_TICKS 6  // from pressing fire to the bullet appearing
 #define KILLS_TO_WIN 3

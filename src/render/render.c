@@ -20,8 +20,10 @@ static const Color eye_colors[MAX_PLAYERS] = {
     { 110, 15, 30, 255 },  // darker than raylib's MAROON (190, 33, 55)
 };
 
-// Aim arrow: one chevron per round in the magazine, in a row pointing where
-// the next shot goes. Loaded rounds are filled, spent ones are outlines.
+// Aim arrow: a row of chevrons pointing where the next shot goes. Filled
+// while the gun is loaded, outlines while it's empty. Not tied to
+// MAGAZINE_SIZE: the arrow keeps its shape whatever the magazine holds.
+#define AIM_CHEVRONS 3
 #define AIM_RADIUS 12.0f         // px from the player's center to the first chevron
 #define AIM_PLANT_OFFSET 4.0f    // pushed out this much while planted
 #define AIM_ARROW_LENGTH 4.0f
@@ -53,14 +55,14 @@ static Vector2 unit_direction(IntVector2 v) {
     return d;
 }
 
-// Aim and ammo for player i, as a row of MAGAZINE_SIZE chevrons:
+// Aim and ammo for player i, as a row of AIM_CHEVRONS chevrons:
 // - Points where a shot fired now would go (from the player's latest input),
 //   or during startup, the locked-in aim.
-// - Loaded rounds are filled, innermost first; spent rounds are outlines.
-//   While reloading they fill up one by one as the reload progresses.
+// - All filled while loaded, all outlines while empty. While reloading they
+//   fill up one by one, innermost first, as the reload progresses.
 // - Faint when the player can't fire (hitstun, cooldown, reloading).
-// - During startup the outermost loaded chevron flies out along the aim and
-//   the bullet appears when it's gone the full distance.
+// - During startup the row empties and the outermost chevron flies out
+//   along the aim; the bullet appears when it's gone the full distance.
 // - Pushed out a little while planted.
 static void draw_aim(const GameState *state, int i, Vector2 center) {
     const Player *p = &state->players[i];
@@ -76,23 +78,22 @@ static void draw_aim(const GameState *state, int i, Vector2 center) {
     Color c = player_colors[i];
     if (!in_startup && !sim_can_shoot(p)) c = Fade(c, 0.35f);
 
-    int loaded = p->ammo;
+    // How many chevrons are filled. Ammo only goes down when the bullet
+    // appears, so check in_startup too: the row empties on the press.
+    int filled = (p->ammo > 0 && !in_startup) ? AIM_CHEVRONS : 0;
     if (p->reload_frames_left > 0) {
         float done = 1.0f - (float)p->reload_frames_left / RELOAD_TICKS;
-        loaded = (int)(done * MAGAZINE_SIZE);
+        filled = (int)(done * AIM_CHEVRONS);
     }
 
-    // The round being fired: ammo only goes down when the bullet appears.
-    int firing = in_startup ? p->ammo - 1 : -1;
-
-    for (int k = 0; k < MAGAZINE_SIZE; k++) {
+    for (int k = 0; k < AIM_CHEVRONS; k++) {
         float radius = first + k * AIM_ARROW_SPACING;
-        draw_chevron(center, d, radius, k < loaded && k != firing, c);
+        draw_chevron(center, d, radius, k < filled, c);
     }
 
     if (in_startup) {
         float done = 1.0f - (float)p->shoot_startup_left / (SHOOT_STARTUP_TICKS + 1);
-        float radius = first + firing * AIM_ARROW_SPACING + AIM_SHOT_TRAVEL * done;
+        float radius = first + (AIM_CHEVRONS - 1) * AIM_ARROW_SPACING + AIM_SHOT_TRAVEL * done;
         draw_chevron(center, d, radius, true, c);
     }
 }
