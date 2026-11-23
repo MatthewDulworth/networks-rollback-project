@@ -45,7 +45,8 @@
 
 #define SHOOT_COOLDOWN_TICKS 20   // after a bullet appears, before the next press
 #define BULLET_SPEED         (8 * SUB_PIXEL_FACTOR)
-#define BULLET_LIFETIME      90
+#define BULLET_LIFETIME      120
+#define BULLET_BOUNCES       3
 
 // 181/256 is about 1/sqrt(2). Diagonal bullets use this per axis so they
 // travel at the same overall speed as straight ones. Integer math, so both
@@ -402,6 +403,7 @@ static void spawn_bullet(GameState *s, int owner, const Player *p) {
         b->position.y = p->position.y + PLAYER_HEIGHT / 2 - BULLET_SIZE / 2;
         b->velocity = p->queued_bullet_velocity;
         b->lifetime_left = BULLET_LIFETIME;
+        b->bounces_left = BULLET_BOUNCES;
         return;
     }
 }
@@ -541,13 +543,38 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
     update_gun(s, index, in, prev_in);
 }
 
-// Move bullets, remove the ones that hit terrain, leave the map or run out of
-// lifetime, and apply hits to the other player.
+// A bullet that moved from `old` into terrain: work out which axis ran into
+// it, flip that part of the velocity, and put the bullet back at `old`
+// (which was clear of terrain, or the bullet would already be gone).
+static void bounce_bullet(Bullet *b, IntVector2 old) {
+    // Redo the move one axis at a time. Whichever one alone reaches terrain
+    // is the one that hit: X means a wall face, Y a floor or ceiling.
+    Collision only_x = { { old.x + b->velocity.x, old.y }, { BULLET_SIZE, BULLET_SIZE } };
+    Collision only_y = { { old.x, old.y + b->velocity.y }, { BULLET_SIZE, BULLET_SIZE } };
+    bool hit_x = touching_terrain(only_x);
+    bool hit_y = touching_terrain(only_y);
+
+    // Neither alone, only both together: a diagonal bullet hit a corner
+    // exactly. Send it straight back.
+    if (!hit_x && !hit_y) {
+        hit_x = true;
+        hit_y = true;
+    }
+
+    if (hit_x) b->velocity.x = -b->velocity.x;
+    if (hit_y) b->velocity.y = -b->velocity.y;
+    b->position = old;
+    b->bounces_left--;
+}
+
+// Move bullets, bounce them off terrain, remove the ones out of bounces, off
+// the map or out of lifetime, and apply hits to the other player.
 static void update_bullets(GameState *s) {
     for (int i = 0; i < MAX_BULLETS; i++) {
         Bullet *b = &s->bullets[i];
         if (!b->active) continue;
 
+        IntVector2 old = b->position;
         b->position.x += b->velocity.x;
         b->position.y += b->velocity.y;
         b->lifetime_left--;
@@ -555,11 +582,19 @@ static void update_bullets(GameState *s) {
         // Before the terrain and map-edge checks, so a bullet that reached a
         // portal is judged where it comes out.
         IntVector2 bullet_size = { BULLET_SIZE, BULLET_SIZE };
-        try_portal(&b->position, &b->velocity, bullet_size);
+        bool ported = try_portal(&b->position, &b->velocity, bullet_size);
 
         // Bullets move at most 8 px per tick and are 8 px big, so they can't
         // skip through a 10 px wide player or platform in one step.
         Collision box = bullet_box(b);
+
+        // Not after a portal: `old` is on the other side of the map then, so
+        // probing from it means nothing. Such a bullet just dies as before.
+        if (!ported && b->bounces_left > 0 && touching_terrain(box)) {
+            bounce_bullet(b, old);
+            box = bullet_box(b);
+        }
+
         if (b->lifetime_left <= 0 || !colliding(box, MapBounds)
             || touching_terrain(box)) {
             b->active = false;

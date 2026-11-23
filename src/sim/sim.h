@@ -150,6 +150,8 @@ typedef struct {
 typedef struct {
     bool active;
     uint8_t owner;
+    // Terrain hits it can still bounce off. The next hit at 0 removes it.
+    uint8_t bounces_left;
 
     IntVector2 position;
     IntVector2 velocity;
