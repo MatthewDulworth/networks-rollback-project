@@ -72,7 +72,7 @@ const Collision MapCollision[NUM_MAP_OBJ] = {
     { {PX(320), PX(270)},   {PX(160), PX(10)} },  // middle platform
 };
 
-// 8 px thick: a bullet (4 px, up to 8 px/tick) or player (10 px, up to
+// 8 px thick: a bullet (8 px, up to 8 px/tick) or player (10 x 20 px, up to
 // 12 px/tick) can't jump over one in a single tick, since thickness + size
 // is more than the distance moved.
 #define PORTAL_THICKNESS PX(8)
@@ -437,8 +437,8 @@ static void update_bullets(GameState *s) {
         IntVector2 bullet_size = { BULLET_SIZE, BULLET_SIZE };
         try_portal(&b->position, &b->velocity, bullet_size);
 
-        // Bullets move at most 8 px per tick and are 4 px big, so they can't
-        // skip through a 10 px player or platform in one step.
+        // Bullets move at most 8 px per tick and are 8 px big, so they can't
+        // skip through a 10 px wide player or platform in one step.
         Collision box = bullet_box(b);
         if (b->lifetime_left <= 0 || !colliding(box, MapBounds)
             || touching_terrain(box)) {

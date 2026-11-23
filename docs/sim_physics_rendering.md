@@ -55,7 +55,7 @@ draw or send a `GameState`. If changing something should never force an edit in
 | `MAX_SPEED` | 3072 | 12 px/tick per axis |
 | `GROUND_ACCEL` / `GROUND_FRICTION` / `GROUND_DRAG` | 384 / 384 / 128 | 1.5 / 1.5 / 0.5 px/tick² |
 | `AIR_ACCEL` / `AIR_FRICTION` / `AIR_DRAG` | 256 / 128 / 16 | 1 / 0.5 / 0.0625 px/tick² |
-| Player size | 2560 × 2560 | 10 × 10 px |
+| Player size | 2560 × 5120 | 10 × 20 px (w × h) |
 
 Combat tuning is in `combat_and_rounds.md`.
 
@@ -119,7 +119,7 @@ bullet after it moves (before the terrain and map-edge checks):
 - **Same-facing pairs** (e.g. two floor portals) rotate 180°, which also flips
   the sideways direction. All current pairs face opposite ways, so it's the
   identity for them.
-- **No tunneling.** Thickness + size beats speed: bullets 8 + 4 > 8 px/tick,
+- **No tunneling.** Thickness + size beats speed: bullets 8 + 8 > 8 px/tick,
   players 8 + 10 > 12 px/tick.
 - **Pitfall when placing new portals:** the exit spot isn't checked for
   terrain, so an exit placed against a wall or with a platform in front of

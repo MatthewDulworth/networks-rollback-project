@@ -82,8 +82,8 @@ ticks late) instead of a bullet popping into existence mid-flight.
 - Each tick: move, lose a tick of lifetime (`BULLET_LIFETIME`, 90 ticks ≈
   720 px), and disappear if the lifetime ran out, it left the map, or it
   touches terrain.
-- **No tunneling:** a bullet moves at most 8 px per tick and is 4 px wide, so
-  it can't jump past a 10 px player or a 10 px platform in one step. A faster
+- **No tunneling:** a bullet moves at most 8 px per tick and is 8 px wide, so
+  it can't jump past a 10 px wide player or a 10 px platform in one step. A faster
   bullet would need to move in smaller steps.
 - **Hits:** only the other player (no self-damage). A hit removes the bullet,
   takes 1 health, sets 20 ticks of hitstun, and sets the target's velocity to

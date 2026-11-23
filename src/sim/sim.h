@@ -26,7 +26,7 @@
 #define MAP_HEIGHT (MAP_PIXEL_HEIGHT * SUB_PIXEL_FACTOR)
 
 #define PLAYER_WIDTH  (10 * SUB_PIXEL_FACTOR)
-#define PLAYER_HEIGHT (10 * SUB_PIXEL_FACTOR)
+#define PLAYER_HEIGHT (20 * SUB_PIXEL_FACTOR)
 
 #define PLAYER_1 0
 #define PLAYER_2 1
@@ -34,7 +34,7 @@
 #define MAX_PLAYERS 2
 #define MAX_BULLETS 16
 
-#define BULLET_SIZE (4 * SUB_PIXEL_FACTOR)
+#define BULLET_SIZE (8 * SUB_PIXEL_FACTOR)
 
 // Rules the renderer also needs (for the HUD).
 #define MAX_HEALTH 3
