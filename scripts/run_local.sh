@@ -3,20 +3,20 @@
 # Output from each is prefixed with [p1] / [p2]. Ctrl-C (or closing either
 # window) stops both.
 #
-# Usage: scripts/run_local.sh [base_port] [--lag ms] [--jitter ms] [--loss pct] [--delay]
+# Usage: scripts/run_local.sh [base_port] [--lag ms] [--jitter ms] [--loss pct] [--delay] [--no-lobby]
 #   base_port: default 5000; uses base_port and base_port+1
 #   e.g. scripts/run_local.sh --lag 100 --jitter 20 --loss 10
 #
 # --lag/--jitter/--loss go to p1 only: one peer's netsim already affects both
 # directions, so giving it to both would double it. Every other flag
-# (--delay) goes to both, since both sides must run the same netcode.
+# (--delay, --no-lobby) goes to both.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 usage() {
-    echo "usage: $0 [base_port] [--lag ms] [--jitter ms] [--loss pct] [--delay]" >&2
+    echo "usage: $0 [base_port] [--lag ms] [--jitter ms] [--loss pct] [--delay] [--no-lobby]" >&2
     echo "  base_port: default 5000; uses base_port and base_port+1" >&2
     exit 1
 }

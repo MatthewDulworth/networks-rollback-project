@@ -15,7 +15,7 @@
         {
             "label": "Build and Run (two local peers)",
             "type": "shell",
-            "command": "./scripts/run_local.sh",
+            "command": "./scripts/run_local.sh --no-lobby",
             "options": {
                 "cwd": "${workspaceFolder}",
                 "env": { "PATH": "/opt/homebrew/bin:${env:PATH}" }

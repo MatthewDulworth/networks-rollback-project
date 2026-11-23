@@ -36,10 +36,15 @@ bool parse_args(int argc, char **argv, Args *args) {
     }
     memset(&args->netsim, 0, sizeof args->netsim);
     args->delay_mode = false;
+    args->skip_lobby = false;
     // One argument per step; a flag with a value consumes its value too.
     for (int i = first_flag; i < argc; i++) {
         if (strcmp(argv[i], "--delay") == 0) {
             args->delay_mode = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--no-lobby") == 0) {
+            args->skip_lobby = true;
             continue;
         }
         if (i + 1 >= argc) {
@@ -88,12 +93,13 @@ bool parse_args(int argc, char **argv, Args *args) {
 void print_usage(const char *program) {
     fprintf(stderr,
             "usage: %s <local_port> <peer_ip> <peer_port> <player 0|1>"
-            " [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
-            "   or: %s lan [--lag ms] [--jitter ms] [--loss pct] [--delay]\n"
+            " [--lag ms] [--jitter ms] [--loss pct] [--delay] [--no-lobby]\n"
+            "   or: %s lan [--lag ms] [--jitter ms] [--loss pct] [--delay] [--no-lobby]\n"
             "  e.g. %s 5000 127.0.0.1 5001 0   (and on the peer: 5001 127.0.0.1 5000 1)\n"
             "  lan finds the other machine by multicast on port %d and picks\n"
             "      the players itself (two machines only, both run \"lan\")\n"
             "  --lag/--jitter/--loss simulate a bad connection (both directions)\n"
-            "  --delay uses delay-based netcode instead of rollback (no prediction)\n",
+            "  --delay uses delay-based netcode instead of rollback (no prediction)\n"
+            "  --no-lobby skips the ready-up lobby (pass it to both peers)\n",
             program, program, program, LAN_PORT);
 }

@@ -19,6 +19,7 @@ typedef struct {
     int player;  // PLAYER_1 or PLAYER_2; must be opposite on the two peers
     NetsimSettings netsim;  // Optional --lag/--jitter/--loss, default all 0
     bool delay_mode;        // --delay: delay-based instead of rollback
+    bool skip_lobby;        // --no-lobby: no ready-up lobby (both peers)
 } Args;
 
 // Fill args from argv. False if anything is missing or malformed.

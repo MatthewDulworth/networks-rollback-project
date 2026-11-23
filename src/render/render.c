@@ -1,4 +1,5 @@
 #include "render/render.h"
+#include <math.h>
 #include "raylib.h"
 #include "rollback/rollback.h"  // NO_TICK
 
@@ -130,7 +131,228 @@ static void draw_crack(Rectangle body, Color c) {
     }
 }
 
+// Hit feedback: a white flash on the player who was hit, and screen shake.
+// Both are worked out from Player.last_hit_tick and the current tick, so
+// nothing is stored here. After a rollback the state says when the hit
+// happened (or that it didn't), and the effect follows automatically.
+#define HIT_FLASH_TICKS 4    // body drawn white this long after a hit
+#define SHAKE_TICKS 20       // shake fades out over this long
+#define SHAKE_PX 3.0f        // strongest shake on a normal hit
+#define KILL_SHAKE_PX 6.0f   // and on a killing hit
+
+// Ticks since player p was last hit, or -1 if they haven't been this round.
+static int ticks_since_hit(const GameState *state, const Player *p) {
+    if (p->last_hit_tick == 0) return -1;
+    return state->tick - p->last_hit_tick;
+}
+
+// How far to shift the world this frame, in px.
+static Vector2 screen_shake(const GameState *state) {
+    // Strongest of the two players' shakes, each fading linearly to 0.
+    float strength = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const Player *p = &state->players[i];
+        int age = ticks_since_hit(state, p);
+        if (age < 0 || age >= SHAKE_TICKS) continue;
+        float max = p->health <= 0 ? KILL_SHAKE_PX : SHAKE_PX;
+        float s = max * (1.0f - (float)age / SHAKE_TICKS);
+        if (s > strength) strength = s;
+    }
+
+    // A different direction each tick, picked by the tick rather than
+    // GetRandomValue(), so the picture doesn't change between ticks when the
+    // screen refreshes faster than 60 Hz.
+    static const Vector2 dirs[] = {
+        { 1.0f, 0.4f }, { -0.6f, -1.0f }, { 0.3f, 1.0f },
+        { -1.0f, 0.2f }, { 0.8f, -0.7f }, { -0.4f, 0.8f },
+    };
+    const int n = sizeof dirs / sizeof dirs[0];
+    Vector2 d = dirs[state->tick % n];
+    return (Vector2){ d.x * strength, d.y * strength };
+}
+
+// Bullet trails: the last few places each bullet was drawn, so bounces show
+// as a V. Kept here, not in GameState: it's only for looks, and the sim
+// state must stay identical on both machines. One trail per bullet slot.
+#define TRAIL_LENGTH 10       // points kept per bullet
+#define TRAIL_MAX_ALPHA 0.4f  // opacity of the segment nearest the bullet
+#define TRAIL_MAX_JUMP 24.0f  // px; a bigger move is a portal, not motion
+
+typedef struct {
+    Vector2 points[TRAIL_LENGTH];  // bullet centres, [0] is the newest
+    int count;
+    int32_t last_lifetime;
+} BulletTrail;
+
+static BulletTrail trails[MAX_BULLETS];
+
+// Call once per rendered frame for every slot, active or not.
+static void update_trail(BulletTrail *t, const Bullet *b) {
+    if (!b->active) {
+        t->count = 0;
+        return;
+    }
+    Vector2 center = {
+        to_px(b->position.x + BULLET_SIZE / 2),
+        to_px(b->position.y + BULLET_SIZE / 2),
+    };
+    if (t->count > 0) {
+        Vector2 last = t->points[0];
+        float dx = center.x - last.x, dy = center.y - last.y;
+        // Lifetime only goes down, so if it went up this slot holds a new
+        // bullet (or a rollback rewound it). A big jump is a portal.
+        // Either way the old points would draw a line across the map.
+        if (b->lifetime_left > t->last_lifetime
+            || dx * dx + dy * dy > TRAIL_MAX_JUMP * TRAIL_MAX_JUMP) {
+            t->count = 0;
+        } else if (dx == 0 && dy == 0) {
+            return;  // didn't move (hitstop, or no new tick this frame)
+        }
+    }
+    t->last_lifetime = b->lifetime_left;
+
+    // Shift everything back one and put the new point at the front.
+    if (t->count < TRAIL_LENGTH) t->count++;
+    for (int k = t->count - 1; k > 0; k--) {
+        t->points[k] = t->points[k - 1];
+    }
+    t->points[0] = center;
+}
+
+// --------------------------------------------------------
+// Particles
+// --------------------------------------------------------
+
+// Particles are never stored. Each frame every one is worked out from scratch
+// from where and when it started and how old it is now, with "random" speeds
+// and angles from a hash: the same particle gets the same numbers every
+// frame, so it moves smoothly instead of jumping around.
+
+// Mixes the bits of x thoroughly (the "lowbias32" hash): inputs that differ
+// by 1 give unrelated outputs.
+static uint32_t hash_u32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7feb352dU;
+    x ^= x >> 15;
+    x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+// A number in [0, 1) that depends only on seed and n.
+static float rand01(uint32_t seed, uint32_t n) {
+    // Top 24 bits: exactly what a float can hold.
+    return (float)(hash_u32(seed ^ hash_u32(n)) >> 8) / 16777216.0f;
+}
+
+// One square particle. It shrinks and fades as t goes from 0 to 1.
+static void draw_particle(Vector2 pos, float size, float t, Color c) {
+    float s = size * (1.0f - t);
+    DrawRectangleV((Vector2){ pos.x - s / 2, pos.y - s / 2 }, (Vector2){ s, s },
+                   Fade(c, 1.0f - t * t));
+}
+
+// How each kind of effect looks. Speeds in px per tick, times in ticks.
+typedef struct {
+    int count;          // particles in the burst
+    int lifetime;       // ticks the longest-lived particle lasts
+    float spread;       // radians either side of the direction (PI: all round)
+    float speed_min, speed_max;
+    float drag;         // fraction of its speed a particle keeps each tick
+    float gravity;      // px per tick^2, downwards
+    float inherit;      // fraction of Effect.direction's speed added to all
+    float size;         // px, at the start
+    float forward;      // px the burst starts ahead of Effect.position
+} EffectStyle;
+
+static const EffectStyle effect_styles[EFFECT_TYPE_COUNT] = {
+    //                     count life spread speed     drag   grav  inh  size fwd
+    [EFFECT_SHOT]       = { 8,   10, 0.45f, 1.5f, 4.0f, 0.80f, 0.0f,  0.0f, 3, 8 },
+    [EFFECT_WALL_HIT]   = { 6,   14, 1.10f, 1.0f, 3.0f, 0.88f, 0.15f, 0.0f, 2, 0 },
+    [EFFECT_PLAYER_HIT] = { 12,  20, 0.80f, 1.5f, 5.0f, 0.88f, 0.20f, 0.0f, 3, 0 },
+    [EFFECT_DEATH]      = { 32,  45, PI,    1.0f, 6.0f, 0.92f, 0.20f, 0.3f, 4, 0 },
+};
+
+// Particles alternate between the player's colour and this one.
+static Color effect_accent(const Effect *e) {
+    switch (e->type) {
+    case EFFECT_SHOT:       return GOLD;   // muzzle flash
+    case EFFECT_WALL_HIT:   return GRAY;   // dust off the wall
+    case EFFECT_PLAYER_HIT: return ORANGE;
+    default:                return eye_colors[e->player];  // darker chunks
+    }
+}
+
+// The burst for one effect as it looks `age` ticks after it happened.
+static void draw_effect(const Effect *e, int age) {
+    const EffectStyle *st = &effect_styles[e->type];
+    if (age < 0 || age >= st->lifetime) return;
+
+    Vector2 dir = { to_px(e->direction.x), to_px(e->direction.y) };
+    float dir_len = sqrtf(dir.x * dir.x + dir.y * dir.y);
+    float base_angle = dir_len > 0 ? atan2f(dir.y, dir.x) : 0.0f;
+    Vector2 origin = { to_px(e->position.x), to_px(e->position.y) };
+    if (dir_len > 0) {
+        origin.x += dir.x / dir_len * st->forward;
+        origin.y += dir.y / dir_len * st->forward;
+    }
+
+    // Different for every effect, the same every frame for this one.
+    uint32_t seed = hash_u32((uint32_t)e->tick ^ hash_u32((uint32_t)e->type
+        ^ hash_u32((uint32_t)e->position.x ^ hash_u32((uint32_t)e->position.y))));
+    Color colors[2] = { player_colors[e->player], effect_accent(e) };
+
+    for (int k = 0; k < st->count; k++) {
+        // Four random numbers per particle: angle, speed, lifetime, size.
+        float angle = base_angle + (rand01(seed, 4 * k) * 2 - 1) * st->spread;
+        float speed = st->speed_min + rand01(seed, 4 * k + 1) * (st->speed_max - st->speed_min);
+        float life = st->lifetime * (0.5f + 0.5f * rand01(seed, 4 * k + 2));
+        float size = st->size * (0.6f + 0.8f * rand01(seed, 4 * k + 3));
+        float t = age / life;
+        if (t >= 1) continue;
+
+        Vector2 v = {
+            cosf(angle) * speed + dir.x * st->inherit,
+            sinf(angle) * speed + dir.y * st->inherit,
+        };
+        // Speed is multiplied by drag every tick, so the distance covered
+        // is v + v*drag + v*drag^2 + ... (age terms), a geometric series.
+        float travel = st->drag < 1
+            ? (1 - powf(st->drag, (float)age)) / (1 - st->drag)
+            : (float)age;
+        Vector2 pos = {
+            origin.x + v.x * travel,
+            origin.y + v.y * travel + 0.5f * st->gravity * age * age,
+        };
+        draw_particle(pos, size, t, colors[k % 2]);
+    }
+}
+
+// Every recent effect in the state. Ages come from the tick, so during
+// hitstop (tick goes on, nothing else moves) bursts keep going.
+static void draw_effects(const GameState *state) {
+    for (int i = 0; i < MAX_EFFECTS; i++) {
+        const Effect *e = &state->effects[i];
+        if (e->type == EFFECT_NONE || e->type >= EFFECT_TYPE_COUNT) continue;
+        draw_effect(e, state->tick - e->tick);
+    }
+}
+
+// Segments get thinner and more transparent towards the tail.
+static void draw_trail(const BulletTrail *t, Color c) {
+    for (int k = 0; k + 1 < t->count; k++) {
+        float fade = 1.0f - (float)k / (TRAIL_LENGTH - 1);
+        float thickness = 1.0f + 3.0f * fade;
+        DrawLineEx(t->points[k], t->points[k + 1], thickness,
+                   Fade(c, TRAIL_MAX_ALPHA * fade));
+    }
+}
+
 void render_game(const GameState *state) {
+    // Everything in the world shakes; the score and banners below don't.
+    Camera2D camera = { .offset = screen_shake(state), .zoom = 1.0f };
+    BeginMode2D(camera);
+
     for (int i = 0; i < NUM_MAP_OBJ; i++) {
         const Collision *obj = &MapCollision[i];
         Rectangle r = {
@@ -164,6 +386,13 @@ void render_game(const GameState *state) {
 
     const char *player_names[MAX_PLAYERS] = { "Blue", "Red" };
 
+    // Trails first, so the bullets are drawn on top of them.
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        const Bullet *b = &state->bullets[i];
+        update_trail(&trails[i], b);
+        if (b->active) draw_trail(&trails[i], player_colors[b->owner]);
+    }
+
     for (int i = 0; i < MAX_BULLETS; i++) {
         const Bullet *b = &state->bullets[i];
         if (!b->active) continue;
@@ -186,8 +415,16 @@ void render_game(const GameState *state) {
         bool flicker = p->hitstun_left > 0 && (state->tick / 3) % 2 == 0;
         float alpha = damaged ? 0.5f : 1.0f;
         if (flicker) alpha *= 0.3f;
-        DrawRectangleRec(r, Fade(player_colors[i], alpha));
-        if (damaged) draw_crack(r, Fade(BLACK, 0.7f));
+        // Just hit: solid white with an outline in the player's colour (the
+        // background is near-white too), instead of the usual body.
+        int age = ticks_since_hit(state, p);
+        if (age >= 0 && age < HIT_FLASH_TICKS) {
+            DrawRectangleRec(r, WHITE);
+            DrawRectangleLinesEx(r, 1.0f, player_colors[i]);
+        } else {
+            DrawRectangleRec(r, Fade(player_colors[i], alpha));
+            if (damaged) draw_crack(r, Fade(BLACK, 0.7f));
+        }
 
         // Eye on the facing side so direction is visible: inside the body,
         // flush with the edge it faces.
@@ -198,6 +435,11 @@ void render_game(const GameState *state) {
         Vector2 center = { r.x + r.width / 2, r.y + r.height / 2 };
         draw_aim(state, i, center);
     }
+
+    // On top of the players, so hit and death bursts aren't hidden.
+    draw_effects(state);
+
+    EndMode2D();
 
     // Score, top right (the debug overlay is top left).
     const char *score = TextFormat("%d - %d", state->kills[PLAYER_1], state->kills[PLAYER_2]);

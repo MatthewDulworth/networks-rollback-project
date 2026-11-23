@@ -44,7 +44,7 @@ mirrored ports and opposite players:
 `scripts/run_local.sh` does exactly that, prefixes each peer's output with
 `[p1]`/`[p2]`, and stops both when either window closes. Pass a different base
 port if 5000/5001 are taken: `scripts/run_local.sh 6000`. Flags go after the
-optional port: `--lag`/`--jitter`/`--loss` to p1 only, `--delay` to both
+optional port: `--lag`/`--jitter`/`--loss` to p1 only, `--delay` and `--no-lobby` (skips the ready-up lobby) to both
 (e.g. `scripts/run_local.sh --lag 100 --loss 10`). Only the focused
 window receives keys, so click the window you want to control.
 

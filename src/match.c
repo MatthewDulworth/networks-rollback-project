@@ -115,11 +115,11 @@ static bool may_simulate(Tick tick) {
     return can_advance(tick);
 }
 
-void match_init(int local_player, bool delay, MatchClock clock) {
+void match_init(int local_player, bool delay, bool skip_lobby, MatchClock clock) {
     now = clock;
     delay_mode = delay;
     next_tick = 0;
-    sim_init(&state);
+    sim_init(&state, skip_lobby);
     memcpy(&next_state, &state, sizeof next_state);
     rollback_init(local_player);
     desync_check_init(&state);

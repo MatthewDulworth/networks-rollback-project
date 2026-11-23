@@ -56,6 +56,9 @@
 #define HITSTUN_TICKS        20
 #define KNOCKBACK_UP         (2 * SUB_PIXEL_FACTOR)   // extra upward pop on hit
 
+// Freeze after a hit, killing or not.
+#define HITSTOP_TICKS        5
+
 #define ROUND_OVER_TICKS     90   // pause after a round
 #define MATCH_OVER_TICKS     240  // longer pause when someone wins the match
 
@@ -386,6 +389,25 @@ bool sim_can_shoot(const Player *p) {
         && p->ammo > 0;
 }
 
+// Record an effect for the renderer (see Effect in sim.h) in the next ring
+// slot, overwriting the oldest. Field by field, like spawn_bullet, so the
+// padding bytes stay zero for the byte-for-byte desync check.
+static void add_effect(GameState *s, EffectType type, int player,
+                       IntVector2 position, IntVector2 direction) {
+    Effect *e = &s->effects[s->next_effect];
+    e->type = (uint8_t)type;
+    e->player = (uint8_t)player;
+    e->tick = s->tick;
+    e->position = position;
+    e->direction = direction;
+    s->next_effect = (uint8_t)((s->next_effect + 1) % MAX_EFFECTS);
+}
+
+static IntVector2 bullet_center(const Bullet *b) {
+    IntVector2 c = { b->position.x + BULLET_SIZE / 2, b->position.y + BULLET_SIZE / 2 };
+    return c;
+}
+
 // Put a bullet in the first free slot. If all MAX_BULLETS are in use the shot
 // is lost (can't happen with 2 players and these fire rates, but it must
 // still behave the same on both machines if it ever does).
@@ -404,6 +426,7 @@ static void spawn_bullet(GameState *s, int owner, const Player *p) {
         b->velocity = p->queued_bullet_velocity;
         b->lifetime_left = BULLET_LIFETIME;
         b->bounces_left = BULLET_BOUNCES;
+        add_effect(s, EFFECT_SHOT, owner, bullet_center(b), b->velocity);
         return;
     }
 }
@@ -546,7 +569,7 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
 // A bullet that moved from `old` into terrain: work out which axis ran into
 // it, flip that part of the velocity, and put the bullet back at `old`
 // (which was clear of terrain, or the bullet would already be gone).
-static void bounce_bullet(Bullet *b, IntVector2 old) {
+static void bounce_bullet(GameState *s, Bullet *b, IntVector2 old) {
     // Redo the move one axis at a time. Whichever one alone reaches terrain
     // is the one that hit: X means a wall face, Y a floor or ceiling.
     Collision only_x = { { old.x + b->velocity.x, old.y }, { BULLET_SIZE, BULLET_SIZE } };
@@ -561,10 +584,22 @@ static void bounce_bullet(Bullet *b, IntVector2 old) {
         hit_y = true;
     }
 
+    // Sparks start where the bullet touched the surface: from its center at
+    // `old`, half a bullet towards the wall on each axis that hit. Worked
+    // out before the flip, while velocity still points at the wall.
+    IntVector2 contact = { old.x + BULLET_SIZE / 2, old.y + BULLET_SIZE / 2 };
+    int sx = (b->velocity.x > 0) - (b->velocity.x < 0);  // -1, 0 or +1
+    int sy = (b->velocity.y > 0) - (b->velocity.y < 0);
+    if (hit_x) contact.x += sx * BULLET_SIZE / 2;
+    if (hit_y) contact.y += sy * BULLET_SIZE / 2;
+
     if (hit_x) b->velocity.x = -b->velocity.x;
     if (hit_y) b->velocity.y = -b->velocity.y;
     b->position = old;
     b->bounces_left--;
+
+    // They fly off along the new (bounced) direction.
+    add_effect(s, EFFECT_WALL_HIT, b->owner, contact, b->velocity);
 }
 
 // Move bullets, bounce them off terrain, remove the ones out of bounces, off
@@ -591,12 +626,18 @@ static void update_bullets(GameState *s) {
         // Not after a portal: `old` is on the other side of the map then, so
         // probing from it means nothing. Such a bullet just dies as before.
         if (!ported && b->bounces_left > 0 && touching_terrain(box)) {
-            bounce_bullet(b, old);
+            bounce_bullet(s, b, old);
             box = bullet_box(b);
         }
 
-        if (b->lifetime_left <= 0 || !colliding(box, MapBounds)
-            || touching_terrain(box)) {
+        bool in_terrain = touching_terrain(box);
+        if (b->lifetime_left <= 0 || !colliding(box, MapBounds) || in_terrain) {
+            if (in_terrain) {
+                // Stopped by terrain (out of bounces): sparks fly back the
+                // way it came.
+                IntVector2 back = { -b->velocity.x, -b->velocity.y };
+                add_effect(s, EFFECT_WALL_HIT, b->owner, bullet_center(b), back);
+            }
             b->active = false;
             continue;
         }
@@ -605,6 +646,8 @@ static void update_bullets(GameState *s) {
         Player *p = &s->players[target];
         if (colliding(box, player_box(p))) {
             b->active = false;
+            // In the victim's colour, carrying on the way the bullet went.
+            add_effect(s, EFFECT_PLAYER_HIT, target, bullet_center(b), b->velocity);
             p->health--;
             p->hitstun_left = HITSTUN_TICKS;
             // The knockback replaces the jump, so releasing jump after
@@ -614,6 +657,11 @@ static void update_bullets(GameState *s) {
             // small pop upward so grounded players actually move.
             p->velocity.x = b->velocity.x * 3 / 4;
             p->velocity.y = b->velocity.y * 3 / 4 - KNOCKBACK_UP;
+
+            p->last_hit_tick = s->tick;
+            // Freeze the whole game, starting next tick. Two hits on the
+            // same tick (a trade) still freeze once.
+            s->hitstop_left = HITSTOP_TICKS;
         }
     }
 }
@@ -663,6 +711,18 @@ static void check_round_end(GameState *s) {
         return;
     }
 
+    // Once per death: the round ends below, and this isn't called again
+    // until the next round. The burst is pushed along by the knockback.
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!dead[i]) continue;
+        const Player *p = &s->players[i];
+        IntVector2 center = {
+            p->position.x + PLAYER_WIDTH / 2,
+            p->position.y + PLAYER_HEIGHT / 2,
+        };
+        add_effect(s, EFFECT_DEATH, i, center, p->velocity);
+    }
+
     if (dead[PLAYER_1] && dead[PLAYER_2]) {
         s->round_winner = -1;
     } else {
@@ -674,12 +734,22 @@ static void check_round_end(GameState *s) {
         sim_match_winner(s) >= 0 ? MATCH_OVER_TICKS : ROUND_OVER_TICKS;
 }
 
+// Leave the lobby and start a match from 0 - 0. Players must already be at
+// their spawns (enter_lobby put them there).
+static void start_match(GameState *s) {
+    s->in_lobby = false;
+    memset(s->kills, 0, sizeof s->kills);
+    s->round_number = 0;
+}
+
 // Back to the lobby with nobody ready. Players go back to their spawns.
+// With skip_lobby, straight on into the next match.
 static void enter_lobby(GameState *s) {
     s->in_lobby = true;
     memset(s->ready, 0, sizeof s->ready);
     s->lobby_countdown_left = LOBBY_COUNTDOWN_TICKS;
     reset_round(s);
+    if (s->skip_lobby) start_match(s);
 }
 
 // One tick in the lobby. A fresh fire press (down now, up last tick) toggles
@@ -704,21 +774,19 @@ static void update_lobby(GameState *s, const Input input[MAX_PLAYERS],
         return;
     }
 
-    // Start the match. Players are already at their spawns (enter_lobby).
-    s->in_lobby = false;
-    memset(s->kills, 0, sizeof s->kills);
-    s->round_number = 0;
+    start_match(s);
 }
 
 // --------------------------------------------------------
 // Public
 // --------------------------------------------------------
 
-void sim_init(GameState *state) {
+void sim_init(GameState *state, bool skip_lobby) {
     // memset rather than `= {0}`: it also zeroes struct padding bytes, so the
     // state can later be hashed/compared byte-for-byte for desync detection.
     memset(state, 0, sizeof *state);
     state->round_winner = -1;
+    state->skip_lobby = skip_lobby;  // before enter_lobby, which reads it
     enter_lobby(state);
 }
 
@@ -734,6 +802,15 @@ void sim(const Input input[MAX_PLAYERS], const GameState *restrict prev, GameSta
     // this tick changes. Read "before" values from prev, write to next.
     memcpy(next, prev, sizeof *next);
     next->tick += 1;
+
+    // Hitstop: freeze everything, timers included. Returning early also
+    // skips recording previous_input, on purpose: the first tick after the
+    // freeze compares against the input from before it, so a button
+    // pressed during the freeze still counts as a fresh press then.
+    if (next->hitstop_left > 0) {
+        next->hitstop_left--;
+        return;
+    }
 
     if (next->in_lobby) {
         update_lobby(next, input, prev->previous_input);
@@ -767,8 +844,9 @@ void sim(const Input input[MAX_PLAYERS], const GameState *restrict prev, GameSta
         check_round_end(next);
     }
 
-    // Recorded even while frozen, so a button held through the pause doesn't
-    // count as a fresh press when the round starts.
+    // Recorded even during the round-over pause, so a button held through it
+    // doesn't count as a fresh press when the round starts. (Not during
+    // hitstop, which returned above.)
     for (int i = 0; i < MAX_PLAYERS; i++) {
         next->previous_input[i] = input[i];
     }

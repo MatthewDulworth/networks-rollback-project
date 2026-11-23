@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     // window is. So the sim and renderer never need to know about fullscreen.
     RenderTexture2D canvas = LoadRenderTexture(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT);
 
-    match_init(args.player, args.delay_mode, GetTime);
+    match_init(args.player, args.delay_mode, args.skip_lobby, GetTime);
 
     while (!WindowShouldClose()) {
         // -------------------------------------------

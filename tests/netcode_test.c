@@ -105,7 +105,7 @@ static int run_peer(int index, int player) {
     netsim_init();
     NetsimSettings off = { 0, 0, 0 };
     netsim_set(player == PLAYER_1 ? sc->netsim : off);
-    match_init(player, sc->delay_mode, clock_now);
+    match_init(player, sc->delay_mode, false, clock_now);
 
     rng_state = 0x9E3779B9u ^ (uint32_t)(index * 7919 + player * 104729 + 1);
     Input input = 0;

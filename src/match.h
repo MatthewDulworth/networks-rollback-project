@@ -34,7 +34,11 @@ typedef struct {
 // whenever input is late. For comparing against rollback under the same
 // network conditions. Only changes when ticks run, not what they compute,
 // so the two peers don't have to use the same mode.
-void match_init(int local_player, bool delay_mode, MatchClock clock);
+//
+// skip_lobby: no ready-up lobby, straight into a match (see sim_init).
+// Unlike delay_mode, both peers must pass the same value.
+void match_init(int local_player, bool delay_mode, bool skip_lobby,
+                MatchClock clock);
 
 // Whether this match was started in delay mode.
 bool match_delay_mode(void);

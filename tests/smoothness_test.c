@@ -139,7 +139,7 @@ static PeerResult run_peer(int condition, int mode, int player) {
     netsim_init();
     NetsimSettings off = { 0, 0, 0 };
     netsim_set(player == PLAYER_1 ? c->netsim : off);
-    match_init(player, mode == 1, clock_now);
+    match_init(player, mode == 1, false, clock_now);
 
     for (int i = 0; i < SAMPLE_RING_SIZE; i++) {
         samples[i].tick = NO_TICK;

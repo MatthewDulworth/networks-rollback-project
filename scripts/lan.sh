@@ -3,7 +3,7 @@
 # this on both machines: they find each other by IPv6 multicast on port 5000
 # and pick who is player 1 / player 2 themselves.
 #
-# Usage: scripts/lan.sh [--lag ms] [--jitter ms] [--loss pct] [--delay]
+# Usage: scripts/lan.sh [--lag ms] [--jitter ms] [--loss pct] [--delay] [--no-lobby]
 #
 # Two machines only: two copies on one machine can't share the port. On one
 # machine use run_local.sh instead.

@@ -146,6 +146,13 @@ typedef struct {
 
     int32_t shoot_startup_left;
     int32_t shoot_cooldown_left;
+
+    // Tick this player was last hit by a bullet, or 0 if not this round
+    // (ticks start at 0 and the first simulated tick is 1, so no hit can
+    // happen on tick 0). Gameplay never reads it: it's there so the
+    // renderer (and later audio) can tell when a hit happened, from the
+    // state alone, which keeps the effects correct across rollbacks.
+    Tick last_hit_tick;
 } Player;
 
 typedef struct {
@@ -159,6 +166,32 @@ typedef struct {
 
     int32_t lifetime_left;
 } Bullet;
+
+// Something the renderer draws a burst of particles for. Recorded by the sim
+// as it happens, so the effects come from the state alone, like
+// Player.last_hit_tick: after a rollback a mispredicted shot's sparks are
+// simply gone, and a resimulated one isn't spawned twice. Gameplay never
+// reads these.
+typedef enum {
+    EFFECT_NONE,        // empty slot
+    EFFECT_SHOT,        // bullet fired: muzzle flash
+    EFFECT_WALL_HIT,    // bullet hit terrain (bounced, or stopped on its last)
+    EFFECT_PLAYER_HIT,  // bullet hit a player
+    EFFECT_DEATH,       // player died
+    EFFECT_TYPE_COUNT,
+} EffectType;
+
+typedef struct {
+    uint8_t type;          // EffectType
+    uint8_t player;        // whose colour: the shooter, or who was hit/died
+    Tick tick;             // when it happened
+    IntVector2 position;   // subpixels, where the burst starts
+    IntVector2 direction;  // which way particles fly (a velocity; any length)
+} Effect;
+
+// Ring of the most recent effects; the oldest is overwritten. Bursts last
+// under a second, so this only has to hold what can happen in that time.
+#define MAX_EFFECTS 32
 
 typedef struct {
     // Frames since the begining of the sim.
@@ -184,6 +217,15 @@ typedef struct {
     // Ticks left in the countdown. Held at LOBBY_COUNTDOWN_TICKS while
     // either player isn't ready, so un-readying restarts it.
     int32_t lobby_countdown_left;
+    // Set once by sim_init (the --no-lobby switch) and never changed: go
+    // straight into a match at startup and after each match ends. In the
+    // state rather than a global so both peers must agree on it: if only
+    // one passed the switch, the sync check reports a desync at once.
+    bool skip_lobby;
+
+    // Hitstop: ticks left in the short freeze after a bullet hits. While
+    // it's above 0 nothing moves and no input is read; only tick advances.
+    int32_t hitstop_left;
 
     // The two player structs
     Player players[MAX_PLAYERS];
@@ -193,14 +235,19 @@ typedef struct {
 
     // Every bullet in the game
     Bullet bullets[MAX_BULLETS];
+
+    // Recent effects for the renderer, and the slot the next one goes in.
+    uint8_t next_effect;
+    Effect effects[MAX_EFFECTS];
 } GameState;
 
 // --------------------------------------------------------
 // Functions
 // --------------------------------------------------------
 
-// Fill in the starting state (tick 0): in the lobby, nobody ready.
-void sim_init(GameState *state);
+// Fill in the starting state (tick 0): in the lobby, nobody ready. With
+// skip_lobby, in a match instead, and the lobby never shows.
+void sim_init(GameState *state, bool skip_lobby);
 
 // PLAYER_1 or PLAYER_2 if that player has reached KILLS_TO_WIN, else -1.
 int sim_match_winner(const GameState *state);
