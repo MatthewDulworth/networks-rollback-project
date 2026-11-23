@@ -64,78 +64,92 @@ Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**. A tap
 
 ## The map
 
-Window and map are 800 × 450 px, mirrored left/right, with platforms up to
-the top of the map and a tower in the middle:
+Window and map are 640 × 450 px, mirrored left/right, with a ceiling on
+top and a tower in the middle:
 
 ```
-  y 100 ==[v]=                                  =[v]==   perches
-  y 190 ========                              ========   high ledges
+  y 125 >                                            <   high wrap-around (gold)
+  y 190 ====[v]                                [v]====   high ledges
   y 270          ==[^]==     [tower]     ==[^]==         T2 platforms
-  y 350 ======                                  ======   low ledges
-  y 430 >=========================[<]##[>]============<  floor
+  y 350 >=====                                  =====<   low ledges (red)
+  y 430 >=========================[<]##[>]============<  floor (sky blue)
 ```
 
-`MapCollision` holds 18 solid boxes (left side; the right is the mirror
-image, `x' = 800 - x - width`):
+`MapCollision` holds 26 solid boxes (left side; the right is the mirror
+image, `x' = 640 - x - width`):
 
 | Box | Position (px) | Size (px) |
 |---|---|---|
-| Floor | x 0, y 430 | 800 × 20 |
-| Wall | x 0, y 0 | 12 × 390 |
-| Tower core | x 382, y 270 | 36 × 160 |
-| Tower strips above the doors | x 370 / 418, y 270 | 12 × 120 |
-| Low ledge | x 0, y 350 | 120 × 10 |
-| T2 platform halves | x 180 / 255, y 270 | 35 × 20 |
-| T2 backing under the notch | x 215, y 282 | 40 × 8 |
-| High ledge | x 0, y 190 | 160 × 10 |
-| Perch | x 0, y 100 | 100 × 10 |
+| Floor | x 0, y 430 | 640 × 20 |
+| Wall pieces (gaps for the wall portals) | x 0, y 0 / 125 / 350 | 12 × 85 / 185 / 40 |
+| Ceiling (gap for the sky portals) | x 12, y 0 | 268 × 12 |
+| Tower core (one box, centred) | x 302, y 270 | 36 × 160 |
+| Tower strips above the doors | x 290 / 338, y 270 | 12 × 120 |
+| Low ledge | x 0, y 350 | 100 × 10 |
+| T2 platform halves | x 150 / 225, y 270 | 35 × 20 |
+| T2 backing under the notch | x 185, y 282 | 40 × 8 |
+| High ledge, solid part | x 0, y 190 | 78 × 10 |
+| High ledge, backing under the portal | x 78, y 202 | 40 × 8 |
+| High ledge, lip at the inner end | x 118, y 190 | 12 × 20 |
 
-- The climb goes floor → low ledge → T2 → high ledge → perch. Each step is
-  at most 90 px, within the 98 px jump. From T2 you can also jump across to
-  the tower top. I brute-forced the inputs for each step in a headless test.
-- There are no death pits, so rounds end on health. Leaving through the top
-  would kill you, but trampolines conserve speed, so you come out no higher
-  than you fell from. The highest launch found (a jump off a perch into a
-  trampoline) still leaves the player's feet 5 px inside the map.
+- The climb goes floor → low ledge → T2 → high ledge. Each step is 80 px,
+  within the 98 px jump. From T2 you can also jump across to the tower
+  top. (The old 800 px map's climb was brute-forced in a headless test;
+  this layout has only been playtested.)
+- There are no death pits, so rounds end on health. The ceiling (12 px,
+  `MAX_SPEED`, so nothing tunnels through) and the sky portals in its gap
+  mean nothing can leave through the top.
 - All boxes are solid from every side, so you bump your head jumping up into
   one from below. One-way platforms would need extra logic in `move_y`.
-- `MapBounds` (the whole 800 × 450 area) is separate. Anything not touching
+- `MapBounds` (the whole 640 × 450 area) is separate. Anything not touching
   it is "outside the map".
 
 ## Portals
 
 `MapPortals` holds static portals, linked in pairs that sit next to each other
 in the array, so portal `i`'s partner is `i ^ 1`. Each has a box (12 px thick)
-and a `Facing`: the direction its opening faces.
+and a `Facing`: the direction its opening faces. The renderer colours pair
+`i / 2` with `pair_colors[i / 2]`, so the array order has to match that list.
 
 | Pair | Portal | Box (px) | Facing | Turn |
 |---|---|---|---|---|
-| Orange | Tower left door | x 370, y 390, 12 × 40 | left | 90° |
-| Orange | Ceiling under right perch | x 730, y 110, 40 × 12 | down | |
-| Purple | Tower right door | x 418, y 390, 12 × 40 | right | 90° |
-| Purple | Ceiling under left perch | x 30, y 110, 40 × 12 | down | |
-| Green | Left T2 notch | x 215, y 270, 40 × 12 | up | 180° |
-| Green | Right T2 notch | x 545, y 270, 40 × 12 | up | |
-| Sky blue | Left wall | x 0, y 390, 12 × 40 | right | 0° |
-| Sky blue | Right wall | x 788, y 390, 12 × 40 | left | |
+| Orange | Tower left door | x 290, y 390, 12 × 40 | left | 90° |
+| Orange | Right high ledge floor | x 522, y 190, 40 × 12 | up | |
+| Purple | Tower right door | x 338, y 390, 12 × 40 | right | 90° |
+| Purple | Left high ledge floor | x 78, y 190, 40 × 12 | up | |
+| Green | Left T2 notch | x 185, y 270, 40 × 12 | up | 180° |
+| Green | Right T2 notch | x 415, y 270, 40 × 12 | up | |
+| Sky blue | Left wall, floor level | x 0, y 390, 12 × 40 | right | 0° |
+| Sky blue | Right wall, floor level | x 628, y 390, 12 × 40 | left | |
+| Red | Left wall above the low ledge | x 0, y 310, 12 × 40 | right | 90° |
+| Red | Left sky portal | x 280, y 0, 40 × 12 | down | |
+| Red | Right wall above the low ledge | x 628, y 310, 12 × 40 | left | 90° |
+| Red | Right sky portal | x 320, y 0, 40 × 12 | down | |
+| Gold | Left wall, high | x 0, y 85, 12 × 40 | right | 0° |
+| Gold | Right wall, high | x 628, y 85, 12 × 40 | left | |
 
-- **Doors and ceilings (orange, purple), crossed.** Walk into a tower door
-  and you drop out of the ceiling on the *other* side's high ledge: a fast
-  way up and across. The other way round, jump from the high ledge into
-  the ceiling above it and you dash out of the far door along the floor,
-  your jump speed turned sideways. Bullets work the same way: shoot a door
-  from the floor and the bullet rains down on the high ledge.
+- **Doors and high ledges (orange, purple), crossed.** Walk into a tower
+  door and you pop up out of the floor of the *other* side's high ledge: a
+  fast way up and across. The other way round, drop onto the ledge portal
+  and you dash out of the far door along the floor, your falling speed
+  turned sideways. A solid lip at the ledge's inner end stops anything
+  getting in from the side.
 - **Trampolines (green).** Both face up, so the turn is 180°. Fall into one
   and you're thrown up out of the other just as fast, with your sideways
   direction mirrored. Jump off a high ledge into one to reach the other
   high ledge.
-- **Wrap-around (sky blue)** at floor level, so the floor is a loop round
-  the tower.
+- **Wrap-arounds (sky blue, gold)** at floor level and above the high
+  ledges: walk or jump into one wall and come out of the other.
+- **Low walls and sky (red), two pairs.** Walk off a low ledge into the
+  wall and you drop out of the top of the map above the tower. Pairs are
+  strictly one-to-one, so the two sky portals sit side by side, one per
+  wall.
 
 **Backing.** A portal in the middle of the map needs terrain behind it, or you
 could go round and fall through its back (entering needs moving *into* the
 portal, so from behind nothing happens). The doors and T2 portals sit in 12 px
-notches with terrain right behind them. The ceilings hang under the perches.
+notches with terrain right behind them. The high-ledge portals have a backing
+strip under them, like the T2 notches.
 The 12 px thickness is what makes backing work: on the tick something first
 overlaps a portal it has moved at most `MAX_SPEED` = 12 px into it, so it
 can't also touch the backing. If it did, `move_x`/`move_y` would push it out

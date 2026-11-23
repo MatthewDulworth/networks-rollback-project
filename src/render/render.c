@@ -142,7 +142,7 @@ void render_game(const GameState *state) {
 
     // Portals: one colour per linked pair (pairs are adjacent, so i / 2),
     // with a light stripe on the open side so you can tell which way it faces.
-    const Color pair_colors[] = { ORANGE, PURPLE, GREEN, SKYBLUE };
+    const Color pair_colors[] = { ORANGE, PURPLE, GREEN, SKYBLUE, RED, RED, GOLD };
     const int num_colors = sizeof pair_colors / sizeof pair_colors[0];
     for (int i = 0; i < NUM_PORTALS; i++) {
         const Portal *portal = &MapPortals[i];

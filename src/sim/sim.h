@@ -19,7 +19,7 @@
 // All positions, sizes and velocities in the sim are in subpixels.
 #define SUB_PIXEL_FACTOR 256
 
-#define MAP_PIXEL_WIDTH 800
+#define MAP_PIXEL_WIDTH 640
 #define MAP_PIXEL_HEIGHT 450
 
 #define MAP_WIDTH (MAP_PIXEL_WIDTH * SUB_PIXEL_FACTOR)
@@ -82,7 +82,7 @@ enum InputFields {
 // Map (static, not part of GameState)
 // --------------------------------------------------------
 
-#define NUM_MAP_OBJ 18
+#define NUM_MAP_OBJ 26
 
 // Defined in sim.c. Exposed so the renderer can draw it.
 extern const Collision MapCollision[NUM_MAP_OBJ];
@@ -104,7 +104,7 @@ typedef struct {
 
 // Portals are linked in pairs that sit next to each other in the array:
 // 0 with 1, 2 with 3, ... so portal i's partner is i ^ 1.
-#define NUM_PORTALS 8
+#define NUM_PORTALS 14
 
 // Defined in sim.c, like MapCollision.
 extern const Portal MapPortals[NUM_PORTALS];

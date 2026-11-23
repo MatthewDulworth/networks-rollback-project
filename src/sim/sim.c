@@ -66,49 +66,66 @@
 
 #define FLOOR_TOP PX(430)
 
-// Mirrored left/right, on four levels plus the floor, with a tower in the
+// Mirrored left/right, on three levels plus the floor, with a tower in the
 // middle. Numbers on the left are the y of each level's top surface.
 //
-//   100 ==[v]=                                  =[v]==   perches
-//   190 ========                              ========   high ledges
+//   125 >                                            <   high wrap-around
+//   190 ====[v]                                [v]====   high ledges
 //   270          ==[^]==     [tower]     ==[^]==         T2 platforms
-//   350 ======                                  ======   low ledges
+//   350 >=====                                  =====<   low ledges
 //   430 >=========================[<]##[>]============<  floor
 //
-// [<] [>]: doors in the tower's base. [v]: ceiling portals under the
-// perches. [^]: trampoline portals in notches in the T2 platforms.
-// > <: floor-level wrap-around at the walls.
+// [<] [>]: doors in the tower's base, linked to the [v] floor portals at
+// the inner ends of the high ledges. [^]: trampoline portals in notches
+// in the T2 platforms. > < at 125: wall-to-wall wrap-around, above the
+// high ledges. > < at 350: low-wall portals, linked to two sky portals
+// at the top middle. > < at 430: floor-level wrap-around at the walls.
 //
 // Each level is at most 90 px above one you can jump from (jump: 98 px).
 // All boxes are solid from every side.
 const Collision MapCollision[NUM_MAP_OBJ] = {
-    { {PX(0),   FLOOR_TOP}, {PX(800), PX(20)} },  // floor
-    // Walls, down to where the wrap-around portals start.
-    { {PX(0),   PX(0)},     {PX(12),  PX(390)} },
-    { {PX(788), PX(0)},     {PX(12),  PX(390)} },
+    { {PX(0),   FLOOR_TOP}, {PX(640), PX(20)} },  // floor
+    // Walls, in three pieces each, with gaps for the wall portals: the
+    // high wrap-around (85-125), one just above each low ledge (310-350),
+    // and the floor-level wrap-around below 390.
+    { {PX(0),   PX(0)},     {PX(12),  PX(85)} },
+    { {PX(0),   PX(125)},   {PX(12),  PX(185)} },
+    { {PX(0),   PX(350)},   {PX(12),  PX(40)} },
+    { {PX(628), PX(0)},     {PX(12),  PX(85)} },
+    { {PX(628), PX(125)},   {PX(12),  PX(185)} },
+    { {PX(628), PX(350)},   {PX(12),  PX(40)} },
+    // Ceiling between the walls, 12 px thick (MAX_SPEED, so nothing tunnels
+    // through it), so a big launch can't fly out the top. The gap in the
+    // middle is where the sky portals are: they catch anything moving up.
+    { {PX(12),  PX(0)},     {PX(268), PX(12)} },
+    { {PX(360), PX(0)},     {PX(268), PX(12)} },
     // Tower: a core, plus the two strips above the doors. The doors are
     // notches in the tower's sides (see "Backing" below).
-    { {PX(382), PX(270)},   {PX(36),  PX(160)} },
-    { {PX(370), PX(270)},   {PX(12),  PX(120)} },
-    { {PX(418), PX(270)},   {PX(12),  PX(120)} },
+    { {PX(302), PX(270)},   {PX(36),  PX(160)} },
+    { {PX(290), PX(270)},   {PX(12),  PX(120)} },
+    { {PX(338), PX(270)},   {PX(12),  PX(120)} },
     // Low ledges.
-    { {PX(0),   PX(350)},   {PX(120), PX(10)} },
-    { {PX(680), PX(350)},   {PX(120), PX(10)} },
+    { {PX(0),   PX(350)},   {PX(100), PX(10)} },
+    { {PX(540), PX(350)},   {PX(100), PX(10)} },
     // T2 platforms, 20 px thick: two halves either side of a 40 px notch,
     // and a backing strip under the notch.
-    { {PX(180), PX(270)},   {PX(35),  PX(20)} },
-    { {PX(255), PX(270)},   {PX(35),  PX(20)} },
-    { {PX(215), PX(282)},   {PX(40),  PX(8)} },
-    { {PX(510), PX(270)},   {PX(35),  PX(20)} },
-    { {PX(585), PX(270)},   {PX(35),  PX(20)} },
-    { {PX(545), PX(282)},   {PX(40),  PX(8)} },
-    // High ledges.
-    { {PX(0),   PX(190)},   {PX(160), PX(10)} },
-    { {PX(640), PX(190)},   {PX(160), PX(10)} },
-    // Perches. Climb up from the outer end of the high ledge, past the
-    // ceiling portal hanging underneath.
-    { {PX(0),   PX(100)},   {PX(100), PX(10)} },
-    { {PX(700), PX(100)},   {PX(100), PX(10)} },
+    { {PX(150), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(225), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(185), PX(282)},   {PX(40),  PX(8)} },
+    { {PX(380), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(455), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(415), PX(282)},   {PX(40),  PX(8)} },
+    // High ledges: a 10 px thick solid part, then a floor portal near the
+    // inner end with a backing strip under it, then a lip at the very end
+    // (20 px thick there, like the T2 notches). The lip stops things
+    // getting into the portal from the side. It's 12 px wide, MAX_SPEED,
+    // so nothing can skip over it in one tick.
+    { {PX(0),   PX(190)},   {PX(78),  PX(10)} },
+    { {PX(78),  PX(202)},   {PX(40),  PX(8)} },
+    { {PX(118), PX(190)},   {PX(12),  PX(20)} },
+    { {PX(562), PX(190)},   {PX(78),  PX(10)} },
+    { {PX(522), PX(202)},   {PX(40),  PX(8)} },
+    { {PX(510), PX(190)},   {PX(12),  PX(20)} },
 };
 
 // 12 px thick, the same as MAX_SPEED. Two reasons:
@@ -126,26 +143,37 @@ const Collision MapCollision[NUM_MAP_OBJ] = {
 // placement rule is: open air directly in front of each exit, at least one
 // player deep.
 const Portal MapPortals[NUM_PORTALS] = {
-    // Doors and ceilings, crossed (a quarter turn). Walk into the tower's
-    // left door and you drop out of the ceiling under the RIGHT perch,
-    // onto the right high ledge: a fast way up, onto the other side.
-    // Backwards: jump from the high ledge up into that ceiling and you
-    // dash out of the left door, your jump speed turned sideways. Bullets
-    // work the same way: shoot the door and it rains on the high ledge.
-    { { {PX(370), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
-    { { {PX(730), PX(110)}, {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
-    // The mirror image: right door <-> ceiling under the left perch.
-    { { {PX(418), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
-    { { {PX(30),  PX(110)}, {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
+    // Doors and high-ledge floors, crossed (a quarter turn). Walk into the
+    // tower's left door and you pop up out of the floor at the inner end
+    // of the RIGHT high ledge: a fast way up, onto the other side.
+    // Backwards: drop onto that portal and you dash out of the left door,
+    // your falling speed turned sideways. Bullets work the same way.
+    { { {PX(290), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
+    { { {PX(522), PX(190)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
+    // The mirror image: right door <-> left high ledge.
+    { { {PX(338), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
+    { { {PX(78),  PX(190)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
     // Trampolines, both facing up (a half turn). Fall into one and you're
     // thrown up out of the other just as fast, with your sideways
     // direction mirrored. Drop in from a high ledge to reach the other one.
-    { { {PX(215), PX(270)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
-    { { {PX(545), PX(270)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
+    { { {PX(185), PX(270)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
+    { { {PX(415), PX(270)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
     // Floor-level wrap-around at the walls (no turn), so the floor is a
     // loop round the tower.
     { { {PX(0),   PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
-    { { {PX(788), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
+    { { {PX(628), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
+    // Low walls and the sky, two pairs (a quarter turn). Walk off a low
+    // ledge into the wall and you drop out of the top of the map, above
+    // the tower, your walking speed turned downwards. The two sky portals
+    // sit side by side: left wall <-> left one, right wall <-> right one.
+    { { {PX(0),   PX(310)}, {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
+    { { {PX(280), PX(0)},   {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
+    { { {PX(628), PX(310)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
+    { { {PX(320), PX(0)},   {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
+    // High wrap-around (no turn), above the high ledges: jump off a high
+    // ledge into the wall and you come out of the other wall, still going.
+    { { {PX(0),   PX(85)},  {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
+    { { {PX(628), PX(85)},  {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
 };
 
 // The whole map. A player or bullet not touching it at all is "outside the
