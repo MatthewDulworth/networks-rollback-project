@@ -57,3 +57,21 @@ Don't advance when `next_tick - last_confirmed_remote_tick > MAX_ROLLBACK`. You 
 
 - While stalled, keep polling input, rendering, receiving, and **resending unacked inputs every frame**. Sending only when a tick advances can deadlock after a lost packet.
 - The hard stall is a fallback. Without frame-advantage time sync, a peer that's consistently slightly ahead keeps hitting the wall and stutters. Build the stall first, then add sync (see "Shared start time" above).
+
+## Rendering: smoothness (render interpolation)
+
+**Status: open.** Low priority: motion looks slightly blurry/juddery, but the game logic is fine.
+
+Measured on 2026-11-22 (two local peers, 15 s, per-frame log, temporary instrumentation since removed):
+
+- Every frame ran exactly 1 tick (~1,730 frames), so sim pacing, catch-up and the frame-advantage nudge are not the cause.
+- The display is 120 Hz. Frames are handed off every 16.66 ms (median) with ±1–2 ms of wobble (stdev ~1 ms, rare 25–33 ms outliers). With nothing aligning frames to the display's refresh, a frame near a refresh boundary is held for 1 or 3 refreshes instead of 2, so motion steps unevenly.
+- Forcing vsync (`FLAG_VSYNC_HINT`) didn't help on macOS: the spread got slightly worse, and two 2-tick frames appeared.
+- In fullscreen, the canvas is also scaled by a fraction (~1.7–1.9×) with point filtering, so a 3 px step becomes 5 or 6 screen px. Not measured; it adds to the above.
+
+Fix: keep the sim at 60 Hz but render at the display's rate, drawing positions blended between the previous and current state by how far we are into the next tick (https://gafferongames.com/post/fix_your_timestep/).
+
+- The main loop currently sleeps until the next tick; it would also need to wake for frames in between.
+- Don't blend across teleports (portals, round resets, large rollback corrections), or the player smears across the map. E.g. skip blending when a player moved more than ~30 px in one tick.
+- Rendering only reads state, so this can't cause a desync.
+- For the fullscreen scaling: bilinear filtering on the canvas (one line), integer scaling, or drawing at screen resolution with a `Camera2D` zoom.
