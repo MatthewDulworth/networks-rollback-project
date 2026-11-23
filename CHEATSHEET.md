@@ -48,6 +48,7 @@ scripts/lan.sh [flags]                     # both machines, no IPs
 | 3 / 4 | jitter -/+ 10 ms |
 | 5 / 6 | loss -/+ 5% |
 | 0 | reset netsim |
+| M | toggle delay netcode / rollback |
 | Tab | stats overlay |
 | Enter | fullscreen |
 

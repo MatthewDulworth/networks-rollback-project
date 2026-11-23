@@ -40,8 +40,12 @@ typedef struct {
 void match_init(int local_player, bool delay_mode, bool skip_lobby,
                 MatchClock clock);
 
-// Whether this match was started in delay mode.
+// Whether delay mode is currently on.
 bool match_delay_mode(void);
+
+// Switch delay mode on or off mid-match. Safe at any moment for the same
+// reason the peers may differ: it only changes when ticks run.
+void match_set_delay_mode(bool on);
 
 // Run one frame with this frame's keyboard sample.
 void match_frame(Input local_input);

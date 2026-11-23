@@ -1,6 +1,7 @@
 #include "input.h"
 #include "raylib.h"
 #include "net/netsim.h"
+#include "match.h"
 #include <assert.h>
 #include <string.h>
 
@@ -50,6 +51,10 @@ void handle_netsim_hotkeys(void) {
     if (key_went_down(KEY_SIX))   s.loss_pct += LOSS_STEP_PCT;
     if (key_went_down(KEY_ZERO))  memset(&s, 0, sizeof s);
     netsim_set(s);  // clamps, so going below 0 or above the max is harmless
+
+    // Not a netsim setting, but the same kind of live comparison: flip
+    // between rollback and delay-based netcode under the current conditions.
+    if (key_went_down(KEY_M)) match_set_delay_mode(!match_delay_mode());
 }
 
 // --------------------------------------------------------

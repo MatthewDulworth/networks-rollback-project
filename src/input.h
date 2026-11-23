@@ -10,7 +10,7 @@
 Input read_local_input(void);
 
 // Number keys change the network simulator live: 1/2 lag, 3/4 jitter,
-// 5/6 loss, 0 resets everything.
+// 5/6 loss, 0 resets everything. M toggles delay mode (see match.h).
 void handle_netsim_hotkeys(void);
 
 // Enter toggles fullscreen (borderless, covering the whole monitor).

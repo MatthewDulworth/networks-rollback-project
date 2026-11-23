@@ -545,7 +545,7 @@ static void render_stats(const OverlayInfo *info) {
                         s->lag_ms, s->jitter_ms, s->loss_pct, info->netsim_dropped),
              10, y, 20, s->lag_ms || s->jitter_ms || s->loss_pct ? MAROON : DARKGRAY);
     y += 24;
-    DrawText("keys: 1/2 lag   3/4 jitter   5/6 loss   0 reset   Enter fullscreen   Tab hide stats", 10, y, 10, GRAY);
+    DrawText("keys: 1/2 lag   3/4 jitter   5/6 loss   0 reset   M delay mode   Enter fullscreen   Tab hide stats", 10, y, 10, GRAY);
     y += 14;
     DrawText(TextFormat("me %s   peer %s", info->local_addr, info->peer_addr), 10, y, 10, GRAY);
     y += 14;

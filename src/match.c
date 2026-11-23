@@ -271,6 +271,10 @@ bool match_delay_mode(void) {
     return delay_mode;
 }
 
+void match_set_delay_mode(bool on) {
+    delay_mode = on;
+}
+
 bool match_started(void) {
     return started;
 }

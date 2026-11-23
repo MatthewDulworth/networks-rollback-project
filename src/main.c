@@ -49,10 +49,11 @@ int main(int argc, char **argv) {
     char local_addr[80];
     net_local_addr(args.local_port, local_addr, sizeof local_addr);
 
+    // No delay mode here: M can change it mid-match, and the stats overlay
+    // already shows the current mode.
     char title[64];
-    snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)%s",
-             args.player + 1, args.player == PLAYER_1 ? "blue" : "red",
-             args.delay_mode ? " - DELAY MODE" : "");
+    snprintf(title, sizeof title, "Rollback Fighter - player %d (%s)",
+             args.player + 1, args.player == PLAYER_1 ? "blue" : "red");
     InitWindow(MAP_PIXEL_WIDTH, MAP_PIXEL_HEIGHT, title);
     // Two local peers: put player 1 on the left edge, player 2 on the right,
     // so the windows don't start on top of each other.
