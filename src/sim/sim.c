@@ -18,6 +18,22 @@
 #define JUMP_VELOCITY  (-7 * SUB_PIXEL_FACTOR)     // negative = up
 #define MAX_SPEED      (12 * SUB_PIXEL_FACTOR)     // per axis
 
+// Horizontal speed changes by at most this much per tick, in subpixels per
+// tick per tick. Three cases:
+// - ACCEL: pushing toward walking speed (or turning around).
+// - FRICTION: not pushing, at or below walking speed (stopping).
+// - DRAG: faster than walking speed and not holding the opposite way (from
+//   knockback, later portals). Much gentler, so extra momentum bleeds off
+//   gradually instead of vanishing.
+// Walking is snappy (ACCEL and FRICTION are high); only the extra speed
+// behaves physically.
+#define GROUND_ACCEL    (SUB_PIXEL_FACTOR * 3 / 2) // 0 -> full speed in 2 ticks
+#define GROUND_FRICTION (SUB_PIXEL_FACTOR * 3 / 2) // full speed -> 0 in 2 ticks
+#define GROUND_DRAG     (SUB_PIXEL_FACTOR / 2)     // 12 px/tick -> walking in 18 ticks
+#define AIR_ACCEL       (SUB_PIXEL_FACTOR)         // 3 ticks
+#define AIR_FRICTION    (SUB_PIXEL_FACTOR / 2)     // 6 ticks
+#define AIR_DRAG        (SUB_PIXEL_FACTOR / 16)    // 144 ticks
+
 #define SHOOT_STARTUP_TICKS  6    // from pressing fire to the bullet appearing
 #define SHOOT_COOLDOWN_TICKS 20   // after a bullet appears, before the next press
 #define BULLET_SPEED         (8 * SUB_PIXEL_FACTOR)
@@ -77,6 +93,12 @@ static bool touching_terrain(Collision box) {
 
 static int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi) {
     return v < lo ? lo : (v > hi ? hi : v);
+}
+
+// Move v toward target by at most step, without overshooting it.
+static int32_t approach(int32_t v, int32_t target, int32_t step) {
+    if (v < target) return (v + step > target) ? target : v + step;
+    return (v - step < target) ? target : v - step;
 }
 
 static Collision player_box(const Player *p) {
@@ -218,8 +240,27 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
 
     if (p->hitstun_left == 0) {
         int dir = axis(in, INPUT_MOVE_LEFT, INPUT_MOVE_RIGHT);
-        p->velocity.x = dir * MOVE_SPEED;
         if (dir != 0) p->facing_right = (dir > 0);
+
+        // Steer toward walking speed in the held direction (or toward 0).
+        // Faster than walking counts as overspeed unless the player is
+        // holding the opposite way (braking): letting go or holding forward
+        // must not throw away momentum.
+        int32_t vx = p->velocity.x;
+        int moving = (vx > 0) - (vx < 0);              // -1, 0 or +1
+        int32_t speed = vx < 0 ? -vx : vx;
+        bool overspeed = speed > MOVE_SPEED && dir != -moving;
+        bool pushing = dir != 0 && !overspeed;
+        // grounded is from the end of last tick, before this tick's move.
+        int32_t step;
+        if (overspeed) {
+            step = p->grounded ? GROUND_DRAG : AIR_DRAG;
+        } else if (pushing) {
+            step = p->grounded ? GROUND_ACCEL : AIR_ACCEL;
+        } else {
+            step = p->grounded ? GROUND_FRICTION : AIR_FRICTION;
+        }
+        p->velocity.x = approach(vx, dir * MOVE_SPEED, step);
 
         // Jump on the tick the button goes down, not while held.
         bool jump_pressed = (in & INPUT_JUMP) && !(prev_in & INPUT_JUMP);

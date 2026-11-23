@@ -53,6 +53,8 @@ draw or send a `GameState`. If changing something should never force an edit in
 | `MOVE_SPEED` | 768 | 3 px/tick (180 px/s) |
 | `JUMP_VELOCITY` | -1792 | 7 px/tick up |
 | `MAX_SPEED` | 3072 | 12 px/tick per axis |
+| `GROUND_ACCEL` / `GROUND_FRICTION` / `GROUND_DRAG` | 384 / 384 / 128 | 1.5 / 1.5 / 0.5 px/tick² |
+| `AIR_ACCEL` / `AIR_FRICTION` / `AIR_DRAG` | 256 / 128 / 16 | 1 / 0.5 / 0.0625 px/tick² |
 | Player size | 2560 × 2560 | 10 × 10 px |
 
 Combat tuning is in `combat_and_rounds.md`.
@@ -91,8 +93,13 @@ Window and map are 800 × 450 px. `MapCollision` holds four solid boxes:
 
 1. **Input → intent**, skipped while `hitstun_left > 0` so knockback survives
    (hitstun counts down and the knockback slows instead).
-   - Horizontal velocity is *set* to `dir * MOVE_SPEED`. There's no
-     acceleration or friction yet.
+   - Horizontal velocity moves *toward* `dir * MOVE_SPEED` by at most a
+     step per tick (`approach()`). The step is DRAG when faster than walking
+     speed and not holding the opposite way, ACCEL while pushing, otherwise
+     FRICTION. ACCEL and FRICTION are high so walking feels snappy (2 ticks
+     to full speed or to a stop on the ground); DRAG is low so knockback and
+     portal momentum decay gradually instead of being cut off. Ground and
+     air use different steps, picked by last tick's `grounded`.
    - `facing_right` follows the last move direction.
    - Jump fires on the **press edge** (`in & JUMP && !(prev_in & JUMP)`) and
      only when `grounded`. Holding jump doesn't bunny-hop.
@@ -178,6 +185,4 @@ Each machine controls one player, with the same keys on both:
 
 ## Open items
 
-- No acceleration/friction. Horizontal velocity is set directly from input,
-  and knockback only blends in because input is ignored during hitstun.
 - Not done yet: portals.
