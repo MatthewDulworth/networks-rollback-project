@@ -686,17 +686,19 @@ static void reset_round(GameState *s) {
     memset(s->players, 0, sizeof s->players);
     memset(s->bullets, 0, sizeof s->bullets);
 
-    // On the floor, a quarter of the map in from each side, facing each other.
+    // On the low ledges (top at 350), facing each other. Centred on the part
+    // of each ledge clear of the wall (x 12-100, mirrored on the right), so
+    // nobody starts touching the low-wall portal just above the wall end.
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Player *p = &s->players[i];
         p->health = MAX_HEALTH;
         p->ammo = MAGAZINE_SIZE;
-        p->position.y = FLOOR_TOP - PLAYER_HEIGHT;
+        p->position.y = PX(350) - PLAYER_HEIGHT;
         p->grounded = true;
     }
-    s->players[PLAYER_1].position.x = MAP_WIDTH / 4 - PLAYER_WIDTH / 2;
+    s->players[PLAYER_1].position.x = PX(56) - PLAYER_WIDTH / 2;
     s->players[PLAYER_1].facing_right = true;
-    s->players[PLAYER_2].position.x = 3 * MAP_WIDTH / 4 - PLAYER_WIDTH / 2;
+    s->players[PLAYER_2].position.x = MAP_WIDTH - PX(56) - PLAYER_WIDTH / 2;
     s->players[PLAYER_2].facing_right = false;
 }
 
