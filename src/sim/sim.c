@@ -43,7 +43,6 @@
 #define AIR_FRICTION    (SUB_PIXEL_FACTOR / 2)     // 6 ticks
 #define AIR_DRAG        (SUB_PIXEL_FACTOR / 16)    // 144 ticks
 
-#define SHOOT_STARTUP_TICKS  6    // from pressing fire to the bullet appearing
 #define SHOOT_COOLDOWN_TICKS 20   // after a bullet appears, before the next press
 #define BULLET_SPEED         (8 * SUB_PIXEL_FACTOR)
 #define BULLET_LIFETIME      90
@@ -335,10 +334,7 @@ static int axis(Input in, Input negative, Input positive) {
     return ((in & positive) ? 1 : 0) - ((in & negative) ? 1 : 0);
 }
 
-// Bullet velocity for the direction the player is aiming: the held direction
-// keys (8 ways), or the way the player is facing if none are held. Straight
-// down on the ground would only hit the floor, so it becomes down-forward.
-static IntVector2 aim_velocity(const Player *p, Input in) {
+IntVector2 sim_aim_velocity(const Player *p, Input in) {
     int dx = axis(in, INPUT_MOVE_LEFT, INPUT_MOVE_RIGHT);
     int dy = axis(in, INPUT_MOVE_UP, INPUT_MOVE_DOWN);
     int facing = p->facing_right ? 1 : -1;
@@ -351,6 +347,14 @@ static IntVector2 aim_velocity(const Player *p, Input in) {
     int32_t speed = (dx != 0 && dy != 0) ? DIAGONAL_SPEED : BULLET_SPEED;
     IntVector2 v = { dx * speed, dy * speed };
     return v;
+}
+
+bool sim_can_shoot(const Player *p) {
+    return p->hitstun_left == 0
+        && p->shoot_startup_left == 0
+        && p->shoot_cooldown_left == 0
+        && p->reload_frames_left == 0
+        && p->ammo > 0;
 }
 
 // Put a bullet in the first free slot. If all MAX_BULLETS are in use the shot
@@ -404,13 +408,9 @@ static void update_gun(GameState *s, int index, Input in, Input prev_in) {
     }
 
     bool shoot_pressed = (in & INPUT_SHOOT) && !(prev_in & INPUT_SHOOT);
-    bool can_shoot = p->hitstun_left == 0
-        && p->shoot_cooldown_left == 0
-        && p->reload_frames_left == 0
-        && p->ammo > 0;
-    if (shoot_pressed && can_shoot) {
+    if (shoot_pressed && sim_can_shoot(p)) {
         // Aim is locked in now, on the press, not when the bullet appears.
-        p->queued_bullet_velocity = aim_velocity(p, in);
+        p->queued_bullet_velocity = sim_aim_velocity(p, in);
         p->shoot_startup_left = SHOOT_STARTUP_TICKS;
     }
 }

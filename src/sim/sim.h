@@ -40,6 +40,7 @@
 #define MAX_HEALTH 3
 #define MAGAZINE_SIZE 3
 #define RELOAD_TICKS 90
+#define SHOOT_STARTUP_TICKS 6  // from pressing fire to the bullet appearing
 #define KILLS_TO_WIN 3
 
 // --------------------------------------------------------
@@ -190,6 +191,15 @@ void sim_init(GameState *state);
 
 // PLAYER_1 or PLAYER_2 if that player has reached KILLS_TO_WIN, else -1.
 int sim_match_winner(const GameState *state);
+
+// Bullet velocity for a shot fired now with input `in`: the held direction
+// keys (8 ways), or the way the player is facing if none are held. Straight
+// down on the ground would only hit the floor, so it becomes down-forward.
+// Public so the renderer can show the aim with the same rules.
+IntVector2 sim_aim_velocity(const Player *p, Input in);
+
+// Whether a fire press right now would start a shot.
+bool sim_can_shoot(const Player *p);
 
 // Advance the game by one tick: next = step(prev, input).
 // prev and next must be different GameStates (they must not overlap).

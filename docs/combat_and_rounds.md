@@ -119,9 +119,15 @@ already in startup still comes out.
 ## HUD (`render_game()` in `src/render/render.c`)
 
 - Bullets in their owner's color.
-- Player flickers while in hitstun.
-- A line from the player shows the locked-in aim during startup.
-- Health pips above each player; ammo dots below, or a bar while reloading.
+- Player flickers while in hitstun. After the first hit the body is faded
+  with a crack drawn across it.
+- The aim arrow is also the ammo display: a row of `MAGAZINE_SIZE` chevrons
+  pointing where a shot fired now would go (from `sim_aim_velocity()` and the
+  player's latest input, so it uses the same rules as the sim). Loaded rounds
+  are filled, spent ones are outlines, and during a reload they fill up one
+  by one. Faint when the player can't fire, further out while planted.
+- During startup the outermost loaded chevron flies out along the locked-in
+  aim; the bullet appears when it has gone the full distance.
 - Score top right with each player's color.
 - A centered message between rounds: who scored, a tie, or who won the match.
 

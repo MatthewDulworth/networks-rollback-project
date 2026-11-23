@@ -12,6 +12,124 @@ static float to_px(int32_t subpixels) {
     return (float)subpixels / SUB_PIXEL_FACTOR;
 }
 
+static const Color player_colors[MAX_PLAYERS] = { BLUE, RED };
+// Darker shades of player_colors, so the eye shows against the body.
+static const Color eye_colors[MAX_PLAYERS] = {
+    { 0, 40, 100, 255 },   // darker than raylib's DARKBLUE (0, 82, 172)
+    { 110, 15, 30, 255 },  // darker than raylib's MAROON (190, 33, 55)
+};
+
+// Aim arrow: one chevron per round in the magazine, in a row pointing where
+// the next shot goes. Loaded rounds are filled, spent ones are outlines.
+#define AIM_RADIUS 12.0f         // px from the player's center to the first chevron
+#define AIM_PLANT_OFFSET 4.0f    // pushed out this much while planted
+#define AIM_ARROW_LENGTH 4.0f
+#define AIM_ARROW_HALF_WIDTH 3.0f
+#define AIM_ARROW_SPACING 5.0f   // px between chevrons along the aim
+#define AIM_SHOT_TRAVEL 20.0f    // px the firing chevron moves during startup
+
+// Chevron with its base `radius` px from `center`, pointing along unit `d`.
+static void draw_chevron(Vector2 center, Vector2 d, float radius, bool filled, Color c) {
+    Vector2 n = { -d.y, d.x };  // perpendicular to d
+    Vector2 base = { center.x + d.x * radius, center.y + d.y * radius };
+    Vector2 tip = { base.x + d.x * AIM_ARROW_LENGTH, base.y + d.y * AIM_ARROW_LENGTH };
+    Vector2 left = { base.x - n.x * AIM_ARROW_HALF_WIDTH, base.y - n.y * AIM_ARROW_HALF_WIDTH };
+    Vector2 right = { base.x + n.x * AIM_ARROW_HALF_WIDTH, base.y + n.y * AIM_ARROW_HALF_WIDTH };
+    // raylib only fills triangles given counter-clockwise (on screen).
+    if (filled) {
+        DrawTriangle(tip, left, right, c);
+    } else {
+        DrawTriangleLines(tip, left, right, c);
+    }
+}
+
+// Unit vector (in px) along a bullet velocity. One of 8 directions.
+static Vector2 unit_direction(IntVector2 v) {
+    float x = (float)((v.x > 0) - (v.x < 0));
+    float y = (float)((v.y > 0) - (v.y < 0));
+    float scale = (x != 0 && y != 0) ? 0.7071f : 1.0f;
+    Vector2 d = { x * scale, y * scale };
+    return d;
+}
+
+// Aim and ammo for player i, as a row of MAGAZINE_SIZE chevrons:
+// - Points where a shot fired now would go (from the player's latest input),
+//   or during startup, the locked-in aim.
+// - Loaded rounds are filled, innermost first; spent rounds are outlines.
+//   While reloading they fill up one by one as the reload progresses.
+// - Faint when the player can't fire (hitstun, cooldown, reloading).
+// - During startup the outermost loaded chevron flies out along the aim and
+//   the bullet appears when it's gone the full distance.
+// - Pushed out a little while planted.
+static void draw_aim(const GameState *state, int i, Vector2 center) {
+    const Player *p = &state->players[i];
+    Input in = state->previous_input[i];
+    bool in_startup = p->shoot_startup_left > 0;
+
+    IntVector2 aim = in_startup ? p->queued_bullet_velocity : sim_aim_velocity(p, in);
+    Vector2 d = unit_direction(aim);
+
+    bool planted = (in & INPUT_PLANT) && p->grounded;
+    float first = AIM_RADIUS + (planted ? AIM_PLANT_OFFSET : 0.0f);
+
+    Color c = player_colors[i];
+    if (!in_startup && !sim_can_shoot(p)) c = Fade(c, 0.35f);
+
+    int loaded = p->ammo;
+    if (p->reload_frames_left > 0) {
+        float done = 1.0f - (float)p->reload_frames_left / RELOAD_TICKS;
+        loaded = (int)(done * MAGAZINE_SIZE);
+    }
+
+    // The round being fired: ammo only goes down when the bullet appears.
+    int firing = in_startup ? p->ammo - 1 : -1;
+
+    for (int k = 0; k < MAGAZINE_SIZE; k++) {
+        float radius = first + k * AIM_ARROW_SPACING;
+        draw_chevron(center, d, radius, k < loaded && k != firing, c);
+    }
+
+    if (in_startup) {
+        float done = 1.0f - (float)p->shoot_startup_left / (SHOOT_STARTUP_TICKS + 1);
+        float radius = first + firing * AIM_ARROW_SPACING + AIM_SHOT_TRAVEL * done;
+        draw_chevron(center, d, radius, true, c);
+    }
+}
+
+// Crack on a damaged player's body, like a hit on glass: a few lines
+// radiating from an impact point, joined by a broken ring part way out.
+// Points are fractions of the body's width and height, minus a 1 px
+// border so the 1 px lines (centered on their points) stay inside the body.
+static void draw_crack(Rectangle body, Color c) {
+    Rectangle r = { body.x + 1, body.y + 1, body.width - 2, body.height - 2 };
+    const Vector2 impact = { 0.45f, 0.35f };
+    const Vector2 ray_ends[] = {
+        { 0.05f, 0.10f }, { 0.95f, 0.05f }, { 1.00f, 0.55f },
+        { 0.70f, 1.00f }, { 0.00f, 0.70f },
+    };
+    // How far along each ray the ring crosses it. Uneven so it isn't a
+    // perfect circle.
+    const float ring_at[] = { 0.50f, 0.40f, 0.45f, 0.35f, 0.55f };
+    // Ring segments join rays k and k+1 (wrapping). Only some are drawn,
+    // so the ring looks broken.
+    const bool ring_drawn[] = { true, false, true, true, false };
+    const int n = sizeof ray_ends / sizeof ray_ends[0];
+
+    Vector2 center = { r.x + impact.x * r.width, r.y + impact.y * r.height };
+    Vector2 ring[sizeof ray_ends / sizeof ray_ends[0]];
+    for (int k = 0; k < n; k++) {
+        Vector2 end = { r.x + ray_ends[k].x * r.width, r.y + ray_ends[k].y * r.height };
+        DrawLineEx(center, end, 1.0f, c);
+        ring[k] = (Vector2){
+            center.x + (end.x - center.x) * ring_at[k],
+            center.y + (end.y - center.y) * ring_at[k],
+        };
+    }
+    for (int k = 0; k < n; k++) {
+        if (ring_drawn[k]) DrawLineEx(ring[k], ring[(k + 1) % n], 1.0f, c);
+    }
+}
+
 void render_game(const GameState *state) {
     for (int i = 0; i < NUM_MAP_OBJ; i++) {
         const Collision *obj = &MapCollision[i];
@@ -44,7 +162,6 @@ void render_game(const GameState *state) {
         DrawRectangleRec(stripe, Fade(WHITE, 0.7f));
     }
 
-    const Color player_colors[MAX_PLAYERS] = { BLUE, RED };
     const char *player_names[MAX_PLAYERS] = { "Blue", "Red" };
 
     for (int i = 0; i < MAX_BULLETS; i++) {
@@ -63,41 +180,23 @@ void render_game(const GameState *state) {
             to_px(p->position.x), to_px(p->position.y),
             to_px(PLAYER_WIDTH), to_px(PLAYER_HEIGHT),
         };
-        // Flicker while in hitstun so hits are easy to see.
+        // Damaged (one hit left): faded and cracked. Flicker while in
+        // hitstun so hits are easy to see.
+        bool damaged = p->health < MAX_HEALTH;
         bool flicker = p->hitstun_left > 0 && (state->tick / 3) % 2 == 0;
-        DrawRectangleRec(r, flicker ? Fade(player_colors[i], 0.3f) : player_colors[i]);
+        float alpha = damaged ? 0.5f : 1.0f;
+        if (flicker) alpha *= 0.3f;
+        DrawRectangleRec(r, Fade(player_colors[i], alpha));
+        if (damaged) draw_crack(r, Fade(BLACK, 0.7f));
 
-        // Small mark on the facing side so direction is visible.
-        float mark_x = p->facing_right ? r.x + r.width : r.x - 3;
-        DrawRectangleRec((Rectangle){ mark_x, r.y + 2, 3, 3 }, BLACK);
+        // Eye on the facing side so direction is visible: inside the body,
+        // flush with the edge it faces.
+        const float eye_width = 5, eye_height = 3;
+        float eye_x = p->facing_right ? r.x + r.width - eye_width : r.x;
+        DrawRectangleRec((Rectangle){ eye_x, r.y + 2, eye_width, eye_height }, eye_colors[i]);
 
-        float cx = r.x + r.width / 2;
-        float cy = r.y + r.height / 2;
-
-        // During shot startup, a line shows where the bullet will go.
-        if (p->shoot_startup_left > 0) {
-            Vector2 dir = {
-                to_px(p->queued_bullet_velocity.x), to_px(p->queued_bullet_velocity.y),
-            };
-            DrawLineEx((Vector2){ cx, cy },
-                       (Vector2){ cx + dir.x * 3, cy + dir.y * 3 }, 2, player_colors[i]);
-        }
-
-        // Health: one pip per point, above the player.
-        for (int h = 0; h < MAX_HEALTH; h++) {
-            Color c = h < p->health ? player_colors[i] : LIGHTGRAY;
-            DrawRectangleRec((Rectangle){ cx - 8 + h * 6, r.y - 8, 4, 4 }, c);
-        }
-        // Ammo: dots under the player, or a bar while reloading.
-        if (p->reload_frames_left > 0) {
-            float done = 1.0f - (float)p->reload_frames_left / RELOAD_TICKS;
-            DrawRectangleRec((Rectangle){ cx - 8, r.y + r.height + 4, 16, 2 }, LIGHTGRAY);
-            DrawRectangleRec((Rectangle){ cx - 8, r.y + r.height + 4, 16 * done, 2 }, DARKGRAY);
-        } else {
-            for (int a = 0; a < p->ammo; a++) {
-                DrawRectangleRec((Rectangle){ cx - 7 + a * 5, r.y + r.height + 4, 3, 3 }, DARKGRAY);
-            }
-        }
+        Vector2 center = { r.x + r.width / 2, r.y + r.height / 2 };
+        draw_aim(state, i, center);
     }
 
     // Score, top right (the debug overlay is top left).

@@ -12,7 +12,7 @@ Portals
 - Portals are always linked in pairs.
 
 Players 
-- Players have 3 health.
+- Players have 3 health. After the first hit they look cracked and faded.
 - Can shoot when in the air.
 - Aim with the movement keys (WASD), 8 directional. If none are held, facing direction is used.
 - Holding plant on the ground stops movement, so left/right only aim and turn. Plant does nothing in the air.
