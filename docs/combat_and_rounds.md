@@ -28,13 +28,16 @@ bullet happened to sit first in the array.
 
 ## Aiming (`aim_velocity`)
 
-8 directions, chosen in this order:
-
-1. The aim keys (arrows), if any are held.
-2. Otherwise the movement keys (WASD), including up and down.
-3. Otherwise the way the player is facing.
+8 directions, from the movement keys (WASD, including up and down). If none
+are held, the way the player is facing. Straight down while grounded becomes
+down-forward, since it would only hit the floor.
 
 Opposite keys cancel out (`axis()` gives −1, 0 or +1).
+
+Holding plant (K) on the ground stops the player moving: left/right still turn
+them, so they can aim any of the 8 ways while standing still. In the air plant
+does nothing. Plant is an input bit like the others, since it changes what the
+sim does and both machines must see it.
 
 Straight bullets move `BULLET_SPEED` (8 px/tick) along one axis. Diagonal
 bullets move `BULLET_SPEED * 181 / 256` on **each** axis. 181/256 ≈ 0.707 ≈

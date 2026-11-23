@@ -71,13 +71,10 @@ enum InputFields {
     INPUT_MOVE_UP = 1 << 2,
     INPUT_MOVE_DOWN = 1 << 3,
 
-    INPUT_AIM_LEFT = 1 << 4,
-    INPUT_AIM_RIGHT = 1 << 5,
-    INPUT_AIM_UP = 1 << 6,
-    INPUT_AIM_DOWN = 1 << 7,
-
-    INPUT_JUMP = 1 << 8,
-    INPUT_SHOOT = 1 << 9,
+    INPUT_JUMP = 1 << 4,
+    INPUT_SHOOT = 1 << 5,
+    // Held on the ground: stand still, left/right only aim and turn.
+    INPUT_PLANT = 1 << 6,
 };
 
 // --------------------------------------------------------

@@ -15,12 +15,8 @@ Input read_local_input(void) {
     if (IsKeyDown(KEY_W)) input |= INPUT_MOVE_UP;
     if (IsKeyDown(KEY_S)) input |= INPUT_MOVE_DOWN;
     if (IsKeyDown(KEY_SPACE)) input |= INPUT_JUMP;
-    if (IsKeyDown(KEY_LEFT))  input |= INPUT_AIM_LEFT;
-    if (IsKeyDown(KEY_RIGHT)) input |= INPUT_AIM_RIGHT;
-    if (IsKeyDown(KEY_UP))    input |= INPUT_AIM_UP;
-    if (IsKeyDown(KEY_DOWN))  input |= INPUT_AIM_DOWN;
-    // J, or right shift which sits next to the arrow keys on a laptop.
-    if (IsKeyDown(KEY_J) || IsKeyDown(KEY_RIGHT_SHIFT)) input |= INPUT_SHOOT;
+    if (IsKeyDown(KEY_J)) input |= INPUT_SHOOT;
+    if (IsKeyDown(KEY_K)) input |= INPUT_PLANT;
     return input;
 }
 

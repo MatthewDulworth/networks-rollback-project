@@ -14,9 +14,9 @@ Portals
 Players 
 - Players have 3 health.
 - Can shoot when in the air.
-- Separate inputs for moving and aiming. 
-- 8 directional aim.
-- When not aiming, movement direction is used, if not moving, facing direction is used.
+- Aim with the movement keys (WASD), 8 directional. If none are held, facing direction is used.
+- Holding plant on the ground stops movement, so left/right only aim and turn. Plant does nothing in the air.
+- Aiming straight down on the ground aims down-forward instead.
 - Aim is decided when the player presses fire, not when the startup is over.
 - No invuln after getting hit.
 - Players can pass through each other.

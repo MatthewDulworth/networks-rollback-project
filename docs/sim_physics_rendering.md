@@ -260,10 +260,11 @@ Each machine controls one player, with the same keys on both:
 
 | Action | Keys |
 |---|---|
-| Move | A / D (W / S also count for aiming) |
+| Move | A / D |
+| Aim (8 directions) | WASD (else facing) |
+| Plant (hold, on ground: aim without moving) | K |
 | Jump | Space |
-| Aim (8 directions) | Arrow keys |
-| Shoot | J or Right Shift |
+| Shoot | J |
 | Network simulator | 1/2 lag, 3/4 jitter, 5/6 loss, 0 reset (see `networking.md`) |
 
 ## Rendering (`render_game()` in `src/render/render.c`)

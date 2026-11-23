@@ -93,8 +93,9 @@ there.
 |---|---|
 | Move | A / D |
 | Jump | Space |
-| Aim | Arrow keys (falls back to WASD, then facing) |
-| Shoot | J or Right Shift |
+| Aim | WASD (falls back to facing) |
+| Plant (hold, on ground) | K |
+| Shoot | J |
 
 Run the tests with `ctest --test-dir build --output-on-failure`:
 

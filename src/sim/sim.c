@@ -335,18 +335,18 @@ static int axis(Input in, Input negative, Input positive) {
     return ((in & positive) ? 1 : 0) - ((in & negative) ? 1 : 0);
 }
 
-// Bullet velocity for the direction the player is aiming. Uses the aim keys;
-// if none are held, the movement keys; if none of those, the way the player
-// is facing.
+// Bullet velocity for the direction the player is aiming: the held direction
+// keys (8 ways), or the way the player is facing if none are held. Straight
+// down on the ground would only hit the floor, so it becomes down-forward.
 static IntVector2 aim_velocity(const Player *p, Input in) {
-    int dx = axis(in, INPUT_AIM_LEFT, INPUT_AIM_RIGHT);
-    int dy = axis(in, INPUT_AIM_UP, INPUT_AIM_DOWN);
+    int dx = axis(in, INPUT_MOVE_LEFT, INPUT_MOVE_RIGHT);
+    int dy = axis(in, INPUT_MOVE_UP, INPUT_MOVE_DOWN);
+    int facing = p->facing_right ? 1 : -1;
     if (dx == 0 && dy == 0) {
-        dx = axis(in, INPUT_MOVE_LEFT, INPUT_MOVE_RIGHT);
-        dy = axis(in, INPUT_MOVE_UP, INPUT_MOVE_DOWN);
+        dx = facing;
     }
-    if (dx == 0 && dy == 0) {
-        dx = p->facing_right ? 1 : -1;
+    if (dx == 0 && dy > 0 && p->grounded) {
+        dx = facing;
     }
     int32_t speed = (dx != 0 && dy != 0) ? DIAGONAL_SPEED : BULLET_SPEED;
     IntVector2 v = { dx * speed, dy * speed };
@@ -430,6 +430,11 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
     if (p->hitstun_left == 0) {
         int dir = axis(in, INPUT_MOVE_LEFT, INPUT_MOVE_RIGHT);
         if (dir != 0) p->facing_right = (dir > 0);
+
+        // Planted on the ground: left/right still turn the player (above)
+        // but don't move them, as if nothing were held. In the air plant
+        // does nothing. Uses last tick's grounded, like the steering below.
+        if ((in & INPUT_PLANT) && p->grounded) dir = 0;
 
         // Steer toward walking speed in the held direction (or toward 0).
         // Faster than walking counts as overspeed unless the player is
