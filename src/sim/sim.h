@@ -42,6 +42,7 @@
 #define RELOAD_TICKS 90
 #define SHOOT_STARTUP_TICKS 6  // from pressing fire to the bullet appearing
 #define KILLS_TO_WIN 3
+#define LOBBY_COUNTDOWN_TICKS 180  // 3 s from both ready to the match starting
 
 // --------------------------------------------------------
 // Basic types
@@ -174,6 +175,16 @@ typedef struct {
     // Only meaningful while round_over_time_left > 0.
     int8_t round_winner;
 
+    // Lobby: before the first match and after each one ends. Players are
+    // frozen at their spawns and press fire to toggle ready. Once both are
+    // ready a countdown runs, and the match starts when it reaches 0.
+    // kills is kept until then, so the lobby can show the last result.
+    bool in_lobby;
+    bool ready[MAX_PLAYERS];
+    // Ticks left in the countdown. Held at LOBBY_COUNTDOWN_TICKS while
+    // either player isn't ready, so un-readying restarts it.
+    int32_t lobby_countdown_left;
+
     // The two player structs
     Player players[MAX_PLAYERS];
 
@@ -188,7 +199,7 @@ typedef struct {
 // Functions
 // --------------------------------------------------------
 
-// Fill in the starting state for a match (tick 0).
+// Fill in the starting state (tick 0): in the lobby, nobody ready.
 void sim_init(GameState *state);
 
 // PLAYER_1 or PLAYER_2 if that player has reached KILLS_TO_WIN, else -1.

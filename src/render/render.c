@@ -224,6 +224,46 @@ void render_game(const GameState *state) {
 }
 
 // --------------------------------------------------------
+// Lobby
+// --------------------------------------------------------
+
+// Draws one line of text centered on the map at height y.
+static void draw_centered(const char *text, int y, int size, Color c) {
+    DrawText(text, (MAP_PIXEL_WIDTH - MeasureText(text, size)) / 2, y, size, c);
+}
+
+void render_lobby(const GameState *state) {
+    if (!state->in_lobby) return;
+
+    // Pale panel over the middle of the map so the text is readable.
+    DrawRectangle(120, 110, MAP_PIXEL_WIDTH - 240, 190, Fade(RAYWHITE, 0.9f));
+
+    // kills is only cleared when a match starts, so a winner here means
+    // we're back in the lobby after a match.
+    const char *player_names[MAX_PLAYERS] = { "Blue", "Red" };
+    int winner = sim_match_winner(state);
+    if (winner >= 0) {
+        draw_centered(TextFormat("%s won the last match", player_names[winner]),
+                      120, 20, DARKGRAY);
+    }
+
+    draw_centered("Press J to ready up", 150, 30, DARKGRAY);
+
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const char *text = TextFormat("%s: %s", player_names[i],
+                                      state->ready[i] ? "READY" : "not ready");
+        Color c = state->ready[i] ? player_colors[i] : Fade(player_colors[i], 0.4f);
+        draw_centered(text, 195 + i * 30, 25, c);
+    }
+
+    if (state->ready[PLAYER_1] && state->ready[PLAYER_2]) {
+        // Round up, so it shows 3, 2, 1 and never 0.
+        int seconds = (state->lobby_countdown_left + 59) / 60;
+        draw_centered(TextFormat("Starting in %d", seconds), 260, 30, DARKGRAY);
+    }
+}
+
+// --------------------------------------------------------
 // Overlay
 // --------------------------------------------------------
 

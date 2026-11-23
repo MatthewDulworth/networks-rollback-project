@@ -33,7 +33,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#define TARGET_TICKS 480        // 8 s of game time
+// The lobby countdown, then 8 s of play.
+#define TARGET_TICKS (LOBBY_COUNTDOWN_TICKS + 480)
 #define LINGER_SECONDS 1.0      // keep exchanging packets after the target
 #define TIMEOUT_SECONDS 30.0    // give up if a peer gets stuck
 #define BASE_PORT 47100
@@ -126,8 +127,13 @@ static int run_peer(int index, int player) {
             break;
         }
 
-        // New buttons every 8 frames: any of the 10 input bits.
-        if (frames % 8 == 0) {
+        // In the lobby: hold fire. That's one press, so we ready up and stay
+        // ready. Random input would keep toggling ready and never start the
+        // match, and then only the lobby would be tested.
+        // After that, new buttons every 8 frames: any of the 10 input bits.
+        if (match_state()->in_lobby) {
+            input = INPUT_SHOOT;
+        } else if (frames % 8 == 0) {
             input = (Input)(rng_next() & 0x3FF);
         }
         frames++;
@@ -141,6 +147,7 @@ static int run_peer(int index, int player) {
     Tick ticks = match_next_tick();
     Tick last_match = sync_check_last_match();
     Tick desync = sync_check_first_desync();
+    bool still_in_lobby = match_state()->in_lobby;
     net_shutdown();
 
     double frames_per_second = frames / seconds;
@@ -153,6 +160,10 @@ static int run_peer(int index, int player) {
     if (desync != NO_TICK) {
         fprintf(stderr, "%s FAIL: DESYNC, the machines' hashes differ at tick %d\n",
                 tag, desync);
+        failures++;
+    }
+    if (still_in_lobby) {
+        fprintf(stderr, "%s FAIL: never left the lobby\n", tag);
         failures++;
     }
     if (ticks < TARGET_TICKS) {

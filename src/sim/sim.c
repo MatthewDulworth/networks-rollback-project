@@ -674,6 +674,42 @@ static void check_round_end(GameState *s) {
         sim_match_winner(s) >= 0 ? MATCH_OVER_TICKS : ROUND_OVER_TICKS;
 }
 
+// Back to the lobby with nobody ready. Players go back to their spawns.
+static void enter_lobby(GameState *s) {
+    s->in_lobby = true;
+    memset(s->ready, 0, sizeof s->ready);
+    s->lobby_countdown_left = LOBBY_COUNTDOWN_TICKS;
+    reset_round(s);
+}
+
+// One tick in the lobby. A fresh fire press (down now, up last tick) toggles
+// that player's ready flag. Edge-triggered, so holding fire doesn't flip it
+// every tick, and a predicted remote input (a repeat of their last one) can
+// never invent a press.
+static void update_lobby(GameState *s, const Input input[MAX_PLAYERS],
+                         const Input previous[MAX_PLAYERS]) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if ((input[i] & INPUT_SHOOT) && !(previous[i] & INPUT_SHOOT)) {
+            s->ready[i] = !s->ready[i];
+        }
+    }
+
+    if (!s->ready[PLAYER_1] || !s->ready[PLAYER_2]) {
+        s->lobby_countdown_left = LOBBY_COUNTDOWN_TICKS;
+        return;
+    }
+
+    s->lobby_countdown_left--;
+    if (s->lobby_countdown_left > 0) {
+        return;
+    }
+
+    // Start the match. Players are already at their spawns (enter_lobby).
+    s->in_lobby = false;
+    memset(s->kills, 0, sizeof s->kills);
+    s->round_number = 0;
+}
+
 // --------------------------------------------------------
 // Public
 // --------------------------------------------------------
@@ -683,7 +719,7 @@ void sim_init(GameState *state) {
     // state can later be hashed/compared byte-for-byte for desync detection.
     memset(state, 0, sizeof *state);
     state->round_winner = -1;
-    reset_round(state);
+    enter_lobby(state);
 }
 
 int sim_match_winner(const GameState *state) {
@@ -699,7 +735,9 @@ void sim(const Input input[MAX_PLAYERS], const GameState *restrict prev, GameSta
     memcpy(next, prev, sizeof *next);
     next->tick += 1;
 
-    if (next->round_over_time_left > 0) {
+    if (next->in_lobby) {
+        update_lobby(next, input, prev->previous_input);
+    } else if (next->round_over_time_left > 0) {
         // Between rounds: everything is frozen until the timer runs out,
         // except dead players, who keep their knockback.
         for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -708,15 +746,16 @@ void sim(const Input input[MAX_PLAYERS], const GameState *restrict prev, GameSta
         }
         next->round_over_time_left--;
         if (next->round_over_time_left == 0) {
+            next->round_winner = -1;
             if (sim_match_winner(next) >= 0) {
-                // Match over: start a new one.
-                memset(next->kills, 0, sizeof next->kills);
-                next->round_number = 0;
+                // Match over: back to the lobby. kills is kept so the
+                // lobby can show the result; it's cleared when the next
+                // match starts.
+                enter_lobby(next);
             } else {
                 next->round_number++;
+                reset_round(next);
             }
-            next->round_winner = -1;
-            reset_round(next);
         }
     } else {
         // Players first (may fire new bullets), then bullets (may hit

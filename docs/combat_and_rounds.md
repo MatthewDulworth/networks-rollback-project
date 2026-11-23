@@ -11,11 +11,13 @@ assert on any mistake.
 ## Order within one tick (`sim()`)
 
 1. Copy `prev` into `next`, `tick += 1`.
-2. **If a round just ended** (`round_over_time_left > 0`): everything is
+2. **If in the lobby** (`in_lobby`): only the ready flags and countdown
+   change (`update_lobby`). Skip steps 3 to 5.
+   **Else if a round just ended** (`round_over_time_left > 0`): everything is
    frozen except dead players, who keep flying from the knockback of the
    hit that killed them (`update_dead_player`: no input, no shooting).
-   Count down, and when the timer hits 0, start the next round (or a
-   new match). Skip steps 3 to 5.
+   Count down, and when the timer hits 0, start the next round (or go
+   back to the lobby). Skip steps 3 to 5.
 3. **Players**, in index order: movement (`update_player`), then the gun
    (`update_gun`), which may fire a bullet.
 4. **Bullets**, in index order: move, expire, hit (`update_bullets`).
@@ -116,8 +118,17 @@ already in startup still comes out.
 - **Reset** (`reset_round`): `memset` the players and bullets (padding
   included), then full health and ammo, spawn positions, `grounded = true`.
   Keeps tick, kills, round number and `previous_input`.
-- **Match over:** after the long pause, kills go back to 0 and a new match
-  starts.
+- **Match over:** after the long pause, back to the lobby.
+- **Lobby** (`update_lobby`, `enter_lobby`): the game starts here, and comes
+  back here after every match. Players are frozen at their spawns. A fresh
+  fire press toggles that player's `ready`. While both are ready,
+  `lobby_countdown_left` counts down from 180 ticks (3 s), and it resets if
+  either un-readies. At 0 the kills and round number are cleared and the
+  match starts. Kills are kept until then so the lobby can show who won.
+  Readying is just input, so rollback keeps the lobby in sync like the rest
+  of the game: no extra packets, and both peers start on the same tick.
+  Before the peer connects no ticks run at all, so the overlay's "Waiting
+  for peer..." banner is shown instead of the lobby panel.
 
 ## HUD (`render_game()` in `src/render/render.c`)
 

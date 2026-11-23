@@ -88,6 +88,11 @@ int main(int argc, char **argv) {
         ClearBackground(RAYWHITE);
 
         render_game(match_state());
+        // Not connected yet: the overlay's "Waiting for peer..." banner is
+        // the start screen instead (see render.h).
+        if (match_started()) {
+            render_lobby(match_state());
+        }
         EndTextureMode();
 
         // Scale the canvas as large as fits while keeping its shape, centred,

@@ -10,6 +10,11 @@
 // Map, bullets, players and the HUD (health, ammo, score, round banners).
 void render_game(const GameState *state);
 
+// The ready-up panel, drawn on top of render_game while state->in_lobby.
+// Only call it once the peer is connected: before that no ticks run, so
+// pressing ready would do nothing (the overlay's waiting banner shows then).
+void render_lobby(const GameState *state);
+
 // Everything the debug overlay shows. Filled in by main each frame, so the
 // renderer doesn't need to know which module each number comes from.
 typedef struct {
