@@ -59,7 +59,8 @@ draw or send a `GameState`. If changing something should never force an edit in
 
 Combat tuning is in `combat_and_rounds.md`.
 
-Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**.
+Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**. A tap
+(released immediately) halves v: 12.25 / 0.5 ≈ **24 px**.
 
 ## The map
 
@@ -101,8 +102,15 @@ Window and map are 800 × 450 px. `MapCollision` holds four solid boxes:
      portal momentum decay gradually instead of being cut off. Ground and
      air use different steps, picked by last tick's `grounded`.
    - `facing_right` follows the last move direction.
-   - Jump fires on the **press edge** (`in & JUMP && !(prev_in & JUMP)`) and
-     only when `grounded`. Holding jump doesn't bunny-hop.
+   - Jump uses the **press edge** (`in & JUMP && !(prev_in & JUMP)`), so
+     holding jump doesn't bunny-hop. The press starts a **jump buffer**
+     (`JUMP_BUFFER_TICKS` = 6); the jump fires on any tick the buffer is
+     live and the player is `grounded` or in **coyote time**
+     (`COYOTE_TICKS` = 6 after leaving the ground). Jumping clears both.
+   - **Variable height**: while rising from a jump (`in_jump`), not holding
+     jump halves `velocity.y` once. Full jump ≈ 98 px, instant release
+     ≈ 24 px. A hit clears `in_jump` so knockback is never cut.
+   - The coyote and buffer timers count down every tick, including hitstun.
 2. **Gravity**: `velocity.y += GRAVITY`.
 3. **Clamp** each axis to ±`MAX_SPEED`. This is the design doc's max speed. It
    also keeps fall speed (12 px) below floor thickness (20 px), so no

@@ -18,6 +18,9 @@
 #define JUMP_VELOCITY  (-7 * SUB_PIXEL_FACTOR)     // negative = up
 #define MAX_SPEED      (12 * SUB_PIXEL_FACTOR)     // per axis
 
+#define COYOTE_TICKS      6  // jump still allowed this long after leaving ground
+#define JUMP_BUFFER_TICKS 6  // an early jump press is remembered this long
+
 // Horizontal speed changes by at most this much per tick, in subpixels per
 // tick per tick. Three cases:
 // - ACCEL: pushing toward walking speed (or turning around).
@@ -238,6 +241,15 @@ static void update_gun(GameState *s, int index, Input in, Input prev_in) {
 static void update_player(GameState *s, int index, Input in, Input prev_in) {
     Player *p = &s->players[index];
 
+    // Jump timers tick every tick, in hitstun too, so a press made during
+    // hitstun has expired long before it ends.
+    if (p->grounded) {
+        p->coyote_left = COYOTE_TICKS;
+    } else if (p->coyote_left > 0) {
+        p->coyote_left--;
+    }
+    if (p->jump_buffer_left > 0) p->jump_buffer_left--;
+
     if (p->hitstun_left == 0) {
         int dir = axis(in, INPUT_MOVE_LEFT, INPUT_MOVE_RIGHT);
         if (dir != 0) p->facing_right = (dir > 0);
@@ -262,10 +274,29 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
         }
         p->velocity.x = approach(vx, dir * MOVE_SPEED, step);
 
-        // Jump on the tick the button goes down, not while held.
+        // A press (not a hold) starts the buffer; the jump fires on any tick
+        // the buffer is live and we're on the ground or in coyote time.
         bool jump_pressed = (in & INPUT_JUMP) && !(prev_in & INPUT_JUMP);
-        if (jump_pressed && p->grounded) {
+        if (jump_pressed) p->jump_buffer_left = JUMP_BUFFER_TICKS;
+
+        bool can_jump = p->grounded || p->coyote_left > 0;
+        if (p->jump_buffer_left > 0 && can_jump) {
             p->velocity.y = JUMP_VELOCITY;
+            p->jump_buffer_left = 0;
+            p->coyote_left = 0;  // or you could jump again mid-air
+            p->in_jump = true;
+        }
+
+        // Variable height: if jump isn't held while still rising from a jump,
+        // halve the upward speed once. Checks "held", not "released", so a
+        // buffered jump whose button was already let go becomes a short hop.
+        if (p->in_jump) {
+            if (p->velocity.y >= 0) {
+                p->in_jump = false;  // past the peak, nothing left to cut
+            } else if (!(in & INPUT_JUMP)) {
+                p->velocity.y /= 2;
+                p->in_jump = false;
+            }
         }
     } else {
         // In hitstun input is ignored and the knockback carries the player,
@@ -312,6 +343,9 @@ static void update_bullets(GameState *s) {
             b->active = false;
             p->health--;
             p->hitstun_left = HITSTUN_TICKS;
+            // The knockback replaces the jump, so releasing jump after
+            // hitstun mustn't cut the knockback's upward speed.
+            p->in_jump = false;
             // Knocked in the bullet's direction at 3/4 of its speed, plus a
             // small pop upward so grounded players actually move.
             p->velocity.x = b->velocity.x * 3 / 4;

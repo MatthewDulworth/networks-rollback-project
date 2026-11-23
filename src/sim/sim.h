@@ -104,6 +104,16 @@ typedef struct {
     // Standing on terrain at the end of the last tick. Set by collision.
     bool grounded;
 
+    // Jump helpers. All counters are in ticks and count down to 0.
+    // Coyote time: can still jump this long after walking off a ledge.
+    int32_t coyote_left;
+    // Jump buffer: a jump pressed this recently fires as soon as it's allowed
+    // (e.g. pressed just before landing).
+    int32_t jump_buffer_left;
+    // Rising from our own jump. Letting go of jump while this is set cuts the
+    // rise short (variable jump height). Cleared at the peak, on cut or hit.
+    bool in_jump;
+
     int32_t hitstun_left;
 
     // Gun
