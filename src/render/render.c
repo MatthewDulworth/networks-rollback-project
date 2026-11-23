@@ -24,14 +24,15 @@ void render_game(const GameState *state) {
 
     // Portals: one colour per linked pair (pairs are adjacent, so i / 2),
     // with a light stripe on the open side so you can tell which way it faces.
-    const Color pair_colors[] = { ORANGE, PURPLE };
+    const Color pair_colors[] = { ORANGE, PURPLE, GREEN, SKYBLUE };
+    const int num_colors = sizeof pair_colors / sizeof pair_colors[0];
     for (int i = 0; i < NUM_PORTALS; i++) {
         const Portal *portal = &MapPortals[i];
         Rectangle r = {
             to_px(portal->box.origin.x), to_px(portal->box.origin.y),
             to_px(portal->box.bounds.x), to_px(portal->box.bounds.y),
         };
-        DrawRectangleRec(r, pair_colors[(i / 2) % 2]);
+        DrawRectangleRec(r, pair_colors[(i / 2) % num_colors]);
 
         Rectangle stripe = r;
         switch (portal->facing) {

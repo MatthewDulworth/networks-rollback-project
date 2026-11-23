@@ -64,22 +64,39 @@ Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**. A tap
 
 ## The map
 
-Window and map are 800 × 450 px. `MapCollision` holds five solid boxes:
+Window and map are 800 × 450 px, mirrored left/right, with platforms up to
+the top of the map and a tower in the middle:
+
+```
+  y 100 ==[v]=                                  =[v]==   perches
+  y 190 ========                              ========   high ledges
+  y 270          ==[^]==     [tower]     ==[^]==         T2 platforms
+  y 350 ======                                  ======   low ledges
+  y 430 >=========================[<]##[>]============<  floor
+```
+
+`MapCollision` holds 18 solid boxes (left side; the right is the mirror
+image, `x' = 800 - x - width`):
 
 | Box | Position (px) | Size (px) |
 |---|---|---|
-| Floor, left of hole | x 100, y 430 | 280 × 20 |
-| Floor, right of hole | x 420, y 430 | 280 × 20 |
-| Left platform | x 0, y 350 | 200 × 10 |
-| Right platform | x 600, y 350 | 200 × 10 |
-| Middle platform | x 320, y 270 | 160 × 10 |
+| Floor | x 0, y 430 | 800 × 20 |
+| Wall | x 0, y 0 | 12 × 390 |
+| Tower core | x 382, y 270 | 36 × 160 |
+| Tower strips above the doors | x 370 / 418, y 270 | 12 × 120 |
+| Low ledge | x 0, y 350 | 120 × 10 |
+| T2 platform halves | x 180 / 255, y 270 | 35 × 20 |
+| T2 backing under the notch | x 215, y 282 | 40 × 8 |
+| High ledge | x 0, y 190 | 160 × 10 |
+| Perch | x 0, y 100 | 100 × 10 |
 
-- The floor stops 100 px short of each side. Falling into a gap takes you off
-  the map, which kills you.
-- The 40 px hole in the middle of the floor holds a portal (see below).
-- The side platforms hang over the gaps and reach the map edges, where the
-  wrap-around portals are.
-- Platforms are 80 px apart vertically, within the 98 px jump.
+- The climb goes floor → low ledge → T2 → high ledge → perch. Each step is
+  at most 90 px, within the 98 px jump. From T2 you can also jump across to
+  the tower top. I brute-forced the inputs for each step in a headless test.
+- There are no death pits, so rounds end on health. Leaving through the top
+  would kill you, but trampolines conserve speed, so you come out no higher
+  than you fell from. The highest launch found (a jump off a perch into a
+  trampoline) still leaves the player's feet 5 px inside the map.
 - All boxes are solid from every side, so you bump your head jumping up into
   one from below. One-way platforms would need extra logic in `move_y`.
 - `MapBounds` (the whole 800 × 450 area) is separate. Anything not touching
@@ -88,15 +105,41 @@ Window and map are 800 × 450 px. `MapCollision` holds five solid boxes:
 ## Portals
 
 `MapPortals` holds static portals, linked in pairs that sit next to each other
-in the array, so portal `i`'s partner is `i ^ 1`. Each has a box (8 px thick)
+in the array, so portal `i`'s partner is `i ^ 1`. Each has a box (12 px thick)
 and a `Facing`: the direction its opening faces.
 
-| Pair | Portal | Box (px) | Facing |
-|---|---|---|---|
-| Orange | Left edge | x 0, y 200, 8 × 150 | right |
-| Orange | Right edge | x 792, y 200, 8 × 150 | left |
-| Purple | Floor hole | x 380, y 430, 40 × 8 | up |
-| Purple | Ceiling | x 380, y 0, 40 × 8 | down |
+| Pair | Portal | Box (px) | Facing | Turn |
+|---|---|---|---|---|
+| Orange | Tower left door | x 370, y 390, 12 × 40 | left | 90° |
+| Orange | Ceiling under right perch | x 730, y 110, 40 × 12 | down | |
+| Purple | Tower right door | x 418, y 390, 12 × 40 | right | 90° |
+| Purple | Ceiling under left perch | x 30, y 110, 40 × 12 | down | |
+| Green | Left T2 notch | x 215, y 270, 40 × 12 | up | 180° |
+| Green | Right T2 notch | x 545, y 270, 40 × 12 | up | |
+| Sky blue | Left wall | x 0, y 390, 12 × 40 | right | 0° |
+| Sky blue | Right wall | x 788, y 390, 12 × 40 | left | |
+
+- **Doors and ceilings (orange, purple), crossed.** Walk into a tower door
+  and you drop out of the ceiling on the *other* side's high ledge: a fast
+  way up and across. The other way round, jump from the high ledge into
+  the ceiling above it and you dash out of the far door along the floor,
+  your jump speed turned sideways. Bullets work the same way: shoot a door
+  from the floor and the bullet rains down on the high ledge.
+- **Trampolines (green).** Both face up, so the turn is 180°. Fall into one
+  and you're thrown up out of the other just as fast, with your sideways
+  direction mirrored. Jump off a high ledge into one to reach the other
+  high ledge.
+- **Wrap-around (sky blue)** at floor level, so the floor is a loop round
+  the tower.
+
+**Backing.** A portal in the middle of the map needs terrain behind it, or you
+could go round and fall through its back (entering needs moving *into* the
+portal, so from behind nothing happens). The doors and T2 portals sit in 12 px
+notches with terrain right behind them. The ceilings hang under the perches.
+The 12 px thickness is what makes backing work: on the tick something first
+overlaps a portal it has moved at most `MAX_SPEED` = 12 px into it, so it
+can't also touch the backing. If it did, `move_x`/`move_y` would push it out
+and zero its velocity before `try_portal` saw it.
 
 `try_portal()` runs for each player after `move_x`/`move_y`, and for each
 bullet after it moves (before the terrain and map-edge checks):
@@ -106,24 +149,34 @@ bullet after it moves (before the terrain and map-edge checks):
 2. **Rotate** velocity by `k = (out - in + 6) % 4` quarter turns clockwise.
    That takes "into the entry" (entry facing + 2) to "out of the exit".
    A quarter turn is `(x, y) → (-y, x)`, so this is exact in integers.
-3. **Place** the box just in front of the exit (touching, not overlapping),
-   keeping its offset from the portal centre (rotated the same way). Walking
-   through at platform height comes out at platform height.
-4. At most one portal per tick.
+3. **Minimum exit speed.** If the speed along the exit's facing is below
+   `MIN_EXIT_SPEED` (4 px/tick), raise it to that. Without this, walking
+   onto a floor portal (entering at gravity speed, 0.25 px/tick) comes out
+   of the partner just as slowly, falls straight back in next tick and
+   flickers between the two. Out of a floor portal, 4 px/tick is a 32 px
+   hop. Only the part along the facing changes; sideways speed is kept.
+4. **Place** the box just in front of the exit (touching, not overlapping),
+   keeping its offset from the portal centre (rotated the same way), but
+   clamped so the box stays within the exit's span.
+5. At most one portal per tick.
+
+Then, for players, `update_player` clears `grounded` and `coyote_left`.
+`move_y` set `grounded` before the teleport, so it described where you were.
+Left alone, walking into a door (grounded) gave a mid-air jump out of the
+ceiling, straight back into it.
 
 - **No instant re-entry.** After step 2 the box moves *out* of the exit, so
   step 1 can't fire on the exit. Moving back into it later (e.g. falling back
   into a floor portal) works straight away, as the design asks.
-- **Momentum is kept** apart from direction. The drag rule in movement means
-  holding forward doesn't cap it.
-- **Same-facing pairs** (e.g. two floor portals) rotate 180°, which also flips
-  the sideways direction. All current pairs face opposite ways, so it's the
-  identity for them.
-- **No tunneling.** Thickness + size beats speed: bullets 8 + 8 > 8 px/tick,
-  players 8 + 10 > 12 px/tick.
-- **Pitfall when placing new portals:** the exit spot isn't checked for
-  terrain, so an exit placed against a wall or with a platform in front of
-  it can put a player inside the terrain.
+- **Momentum is kept** apart from direction (and the minimum exit speed).
+  The drag rule in movement means holding forward doesn't cap it.
+- **Same-facing pairs** (the trampolines) rotate 180°, which also flips
+  the sideways direction. Opposite-facing pairs (the wrap) rotate 0°.
+- **No tunneling.** Thickness + size beats speed: 12 + 8 > 8 px/tick for
+  bullets, 12 + 10 > 12 for players.
+- **Placing new portals:** keep open air directly in front of each exit, at
+  least a player deep (step 4 keeps things within the exit's span), and
+  give mid-map portals backing.
 
 ## One tick (`sim()`)
 
@@ -159,6 +212,8 @@ bullet after it moves (before the terrain and map-edge checks):
    also keeps fall speed (12 px) below floor thickness (20 px), so no
    tunneling.
 4. **`move_x()` then `move_y()`**: separate-axis collision.
+   Then `try_portal()`; after a teleport, `grounded` and `coyote_left` are
+   cleared (see Portals).
 5. **`update_gun()`** (see `combat_and_rounds.md`).
 
 ## Collision: separate-axis resolution

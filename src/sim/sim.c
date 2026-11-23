@@ -18,6 +18,12 @@
 #define JUMP_VELOCITY  (-7 * SUB_PIXEL_FACTOR)     // negative = up
 #define MAX_SPEED      (12 * SUB_PIXEL_FACTOR)     // per axis
 
+// Anything leaving a portal moves out of it at least this fast. Without it,
+// walking onto a floor portal (entering at gravity speed, 0.25 px/tick) comes
+// out of the partner just as slowly, falls straight back in next tick and
+// flickers between the two. 4 px/tick out of a floor portal is a 32 px hop.
+#define MIN_EXIT_SPEED (4 * SUB_PIXEL_FACTOR)
+
 #define COYOTE_TICKS      6  // jump still allowed this long after leaving ground
 #define JUMP_BUFFER_TICKS 6  // an early jump press is remembered this long
 
@@ -61,31 +67,86 @@
 
 #define FLOOR_TOP PX(430)
 
-// A floor with gaps at both sides (fall in and you die) and a 40 px hole in
-// the middle for a portal. A platform over each gap reaching the map edge,
-// and one in the middle. All solid from every side.
+// Mirrored left/right, on four levels plus the floor, with a tower in the
+// middle. Numbers on the left are the y of each level's top surface.
+//
+//   100 ==[v]=                                  =[v]==   perches
+//   190 ========                              ========   high ledges
+//   270          ==[^]==     [tower]     ==[^]==         T2 platforms
+//   350 ======                                  ======   low ledges
+//   430 >=========================[<]##[>]============<  floor
+//
+// [<] [>]: doors in the tower's base. [v]: ceiling portals under the
+// perches. [^]: trampoline portals in notches in the T2 platforms.
+// > <: floor-level wrap-around at the walls.
+//
+// Each level is at most 90 px above one you can jump from (jump: 98 px).
+// All boxes are solid from every side.
 const Collision MapCollision[NUM_MAP_OBJ] = {
-    { {PX(100), FLOOR_TOP}, {PX(280), PX(20)} },  // floor, left of the hole
-    { {PX(420), FLOOR_TOP}, {PX(280), PX(20)} },  // floor, right of the hole
-    { {PX(0),   PX(350)},   {PX(200), PX(10)} },  // left platform
-    { {PX(600), PX(350)},   {PX(200), PX(10)} },  // right platform
-    { {PX(320), PX(270)},   {PX(160), PX(10)} },  // middle platform
+    { {PX(0),   FLOOR_TOP}, {PX(800), PX(20)} },  // floor
+    // Walls, down to where the wrap-around portals start.
+    { {PX(0),   PX(0)},     {PX(12),  PX(390)} },
+    { {PX(788), PX(0)},     {PX(12),  PX(390)} },
+    // Tower: a core, plus the two strips above the doors. The doors are
+    // notches in the tower's sides (see "Backing" below).
+    { {PX(382), PX(270)},   {PX(36),  PX(160)} },
+    { {PX(370), PX(270)},   {PX(12),  PX(120)} },
+    { {PX(418), PX(270)},   {PX(12),  PX(120)} },
+    // Low ledges.
+    { {PX(0),   PX(350)},   {PX(120), PX(10)} },
+    { {PX(680), PX(350)},   {PX(120), PX(10)} },
+    // T2 platforms, 20 px thick: two halves either side of a 40 px notch,
+    // and a backing strip under the notch.
+    { {PX(180), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(255), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(215), PX(282)},   {PX(40),  PX(8)} },
+    { {PX(510), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(585), PX(270)},   {PX(35),  PX(20)} },
+    { {PX(545), PX(282)},   {PX(40),  PX(8)} },
+    // High ledges.
+    { {PX(0),   PX(190)},   {PX(160), PX(10)} },
+    { {PX(640), PX(190)},   {PX(160), PX(10)} },
+    // Perches. Climb up from the outer end of the high ledge, past the
+    // ceiling portal hanging underneath.
+    { {PX(0),   PX(100)},   {PX(100), PX(10)} },
+    { {PX(700), PX(100)},   {PX(100), PX(10)} },
 };
 
-// 8 px thick: a bullet (8 px, up to 8 px/tick) or player (10 x 20 px, up to
-// 12 px/tick) can't jump over one in a single tick, since thickness + size
-// is more than the distance moved.
-#define PORTAL_THICKNESS PX(8)
+// 12 px thick, the same as MAX_SPEED. Two reasons:
+// - No tunneling: nothing moves more than 12 px per tick, so nothing can
+//   jump over a portal in one tick.
+// - Backing: a portal in the middle of the map needs solid terrain behind
+//   it, or you could go round and fall through its back. That terrain sits
+//   right behind the 12 px box. On the tick something first overlaps the
+//   portal it has moved at most 12 px into it, so it never also touches the
+//   backing. That matters, because move_x/move_y would push it out of the
+//   backing and zero its velocity before try_portal ran.
+#define PORTAL_THICKNESS PX(12)
 
+// try_portal keeps whatever comes out inside the exit's span, so the only
+// placement rule is: open air directly in front of each exit, at least one
+// player deep.
 const Portal MapPortals[NUM_PORTALS] = {
-    // Wrap-around at the side edges, standing on the side platforms. Tall
-    // enough that a jump from the platform stays inside them.
-    { { {PX(0), PX(200)}, {PORTAL_THICKNESS, PX(150)} }, FACING_RIGHT },
-    { { {PX(800) - PORTAL_THICKNESS, PX(200)}, {PORTAL_THICKNESS, PX(150)} }, FACING_LEFT },
-    // Fall through the hole in the floor, drop from the ceiling onto the
-    // middle platform.
-    { { {PX(380), FLOOR_TOP}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
-    { { {PX(380), 0}, {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
+    // Doors and ceilings, crossed (a quarter turn). Walk into the tower's
+    // left door and you drop out of the ceiling under the RIGHT perch,
+    // onto the right high ledge: a fast way up, onto the other side.
+    // Backwards: jump from the high ledge up into that ceiling and you
+    // dash out of the left door, your jump speed turned sideways. Bullets
+    // work the same way: shoot the door and it rains on the high ledge.
+    { { {PX(370), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
+    { { {PX(730), PX(110)}, {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
+    // The mirror image: right door <-> ceiling under the left perch.
+    { { {PX(418), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
+    { { {PX(30),  PX(110)}, {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
+    // Trampolines, both facing up (a half turn). Fall into one and you're
+    // thrown up out of the other just as fast, with your sideways
+    // direction mirrored. Drop in from a high ledge to reach the other one.
+    { { {PX(215), PX(270)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
+    { { {PX(545), PX(270)}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
+    // Floor-level wrap-around at the walls (no turn), so the floor is a
+    // loop round the tower.
+    { { {PX(0),   PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_RIGHT },
+    { { {PX(788), PX(390)}, {PORTAL_THICKNESS, PX(40)} }, FACING_LEFT },
 };
 
 // The whole map. A player or bullet not touching it at all is "outside the
@@ -190,25 +251,39 @@ static bool try_portal(IntVector2 *pos, IntVector2 *vel, IntVector2 size) {
         offset = rotate_quarters(offset, k);
         *vel = rotate_quarters(*vel, k);
 
+        // Enforce the minimum speed out of the exit (see MIN_EXIT_SPEED).
+        // Only the part of the velocity along the exit's facing changes.
+        IntVector2 n_out = FacingNormal[out->facing];
+        int32_t out_speed = vel->x * n_out.x + vel->y * n_out.y;
+        if (out_speed < MIN_EXIT_SPEED) {
+            vel->x += (MIN_EXIT_SPEED - out_speed) * n_out.x;
+            vel->y += (MIN_EXIT_SPEED - out_speed) * n_out.y;
+        }
+
         // Keep the offset along the exit portal, but put the box just in
         // front of it (touching, not overlapping) so it starts in open air.
+        // The offset is clamped so the box stays within the exit's span:
+        // an offset from a longer entry would otherwise poke out past the
+        // end of a shorter exit, maybe into the terrain next to it.
         const Collision *ob = &out->box;
+        int32_t min_x = ob->origin.x, max_x = ob->origin.x + ob->bounds.x - size.x;
+        int32_t min_y = ob->origin.y, max_y = ob->origin.y + ob->bounds.y - size.y;
         switch (out->facing) {
         case FACING_UP:
-            pos->x = c_out.x + offset.x - size.x / 2;
+            pos->x = clamp_i32(c_out.x + offset.x - size.x / 2, min_x, max_x);
             pos->y = ob->origin.y - size.y;
             break;
         case FACING_DOWN:
-            pos->x = c_out.x + offset.x - size.x / 2;
+            pos->x = clamp_i32(c_out.x + offset.x - size.x / 2, min_x, max_x);
             pos->y = ob->origin.y + ob->bounds.y;
             break;
         case FACING_LEFT:
             pos->x = ob->origin.x - size.x;
-            pos->y = c_out.y + offset.y - size.y / 2;
+            pos->y = clamp_i32(c_out.y + offset.y - size.y / 2, min_y, max_y);
             break;
         case FACING_RIGHT:
             pos->x = ob->origin.x + ob->bounds.x;
-            pos->y = c_out.y + offset.y - size.y / 2;
+            pos->y = clamp_i32(c_out.y + offset.y - size.y / 2, min_y, max_y);
             break;
         }
         return true;  // at most one portal per tick
@@ -416,7 +491,14 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
     move_x(p);
     move_y(p);
     IntVector2 player_size = { PLAYER_WIDTH, PLAYER_HEIGHT };
-    try_portal(&p->position, &p->velocity, player_size);
+    if (try_portal(&p->position, &p->velocity, player_size)) {
+        // move_y set grounded before the teleport, so it describes where
+        // we were, not where we are now: we always come out in the air.
+        // Coyote time is cleared too, or walking into a door (grounded)
+        // would allow a mid-air jump out of the ceiling, straight back in.
+        p->grounded = false;
+        p->coyote_left = 0;
+    }
 
     update_gun(s, index, in, prev_in);
 }
