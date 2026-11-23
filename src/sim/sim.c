@@ -415,6 +415,27 @@ static void update_gun(GameState *s, int index, Input in, Input prev_in) {
     }
 }
 
+// Gravity, speed limits, moving against terrain and portals. The part of a
+// player's update that doesn't depend on input.
+static void move_player(Player *p) {
+    p->velocity.y += GRAVITY;
+
+    p->velocity.x = clamp_i32(p->velocity.x, -MAX_SPEED, MAX_SPEED);
+    p->velocity.y = clamp_i32(p->velocity.y, -MAX_SPEED, MAX_SPEED);
+
+    move_x(p);
+    move_y(p);
+    IntVector2 player_size = { PLAYER_WIDTH, PLAYER_HEIGHT };
+    if (try_portal(&p->position, &p->velocity, player_size)) {
+        // move_y set grounded before the teleport, so it describes where
+        // we were, not where we are now: we always come out in the air.
+        // Coyote time is cleared too, or walking into a door (grounded)
+        // would allow a mid-air jump out of the ceiling, straight back in.
+        p->grounded = false;
+        p->coyote_left = 0;
+    }
+}
+
 static void update_player(GameState *s, int index, Input in, Input prev_in) {
     Player *p = &s->players[index];
 
@@ -488,23 +509,7 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
         p->hitstun_left--;
     }
 
-    p->velocity.y += GRAVITY;
-
-    p->velocity.x = clamp_i32(p->velocity.x, -MAX_SPEED, MAX_SPEED);
-    p->velocity.y = clamp_i32(p->velocity.y, -MAX_SPEED, MAX_SPEED);
-
-    move_x(p);
-    move_y(p);
-    IntVector2 player_size = { PLAYER_WIDTH, PLAYER_HEIGHT };
-    if (try_portal(&p->position, &p->velocity, player_size)) {
-        // move_y set grounded before the teleport, so it describes where
-        // we were, not where we are now: we always come out in the air.
-        // Coyote time is cleared too, or walking into a door (grounded)
-        // would allow a mid-air jump out of the ceiling, straight back in.
-        p->grounded = false;
-        p->coyote_left = 0;
-    }
-
+    move_player(p);
     update_gun(s, index, in, prev_in);
 }
 
@@ -552,6 +557,14 @@ static void update_bullets(GameState *s) {
 
 static bool is_dead(const Player *p) {
     return p->health <= 0 || !colliding(player_box(p), MapBounds);
+}
+
+// A dead player between rounds: no control and no shooting, but they keep
+// flying from the hit that killed them, slowing like in hitstun.
+static void update_dead_player(Player *p) {
+    p->velocity.x -= p->velocity.x / 16;
+    if (p->hitstun_left > 0) p->hitstun_left--;  // keeps the flicker going
+    move_player(p);
 }
 
 // Put both players back at their spawns with full health and ammo, and clear
@@ -624,7 +637,12 @@ void sim(const Input input[MAX_PLAYERS], const GameState *restrict prev, GameSta
     next->tick += 1;
 
     if (next->round_over_time_left > 0) {
-        // Between rounds: everything is frozen until the timer runs out.
+        // Between rounds: everything is frozen until the timer runs out,
+        // except dead players, who keep their knockback.
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            Player *p = &next->players[i];
+            if (is_dead(p)) update_dead_player(p);
+        }
         next->round_over_time_left--;
         if (next->round_over_time_left == 0) {
             if (sim_match_winner(next) >= 0) {

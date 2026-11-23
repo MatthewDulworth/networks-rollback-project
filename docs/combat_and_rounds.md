@@ -12,7 +12,9 @@ assert on any mistake.
 
 1. Copy `prev` into `next`, `tick += 1`.
 2. **If a round just ended** (`round_over_time_left > 0`): everything is
-   frozen. Count down, and when the timer hits 0, start the next round (or a
+   frozen except dead players, who keep flying from the knockback of the
+   hit that killed them (`update_dead_player`: no input, no shooting).
+   Count down, and when the timer hits 0, start the next round (or a
    new match). Skip steps 3 to 5.
 3. **Players**, in index order: movement (`update_player`), then the gun
    (`update_gun`), which may fire a bullet.
@@ -109,7 +111,8 @@ already in startup still comes out.
   same tick, nobody scores. `round_winner` records the result (−1 for a tie)
   so the renderer can show it.
 - **Pause:** 90 ticks (1.5 s) after a round, 240 ticks (4 s) when someone
-  reaches `KILLS_TO_WIN` (3). The game is frozen during the pause.
+  reaches `KILLS_TO_WIN` (3). The game is frozen during the pause, apart
+  from dead players finishing their knockback.
 - **Reset** (`reset_round`): `memset` the players and bullets (padding
   included), then full health and ammo, spawn positions, `grounded = true`.
   Keeps tick, kills, round number and `previous_input`.
