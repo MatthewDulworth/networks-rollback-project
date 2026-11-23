@@ -61,13 +61,31 @@
 
 #define FLOOR_TOP PX(430)
 
-// A floor with gaps at both sides (fall in and you die), a platform over each
-// gap, and one in the middle. All solid from every side.
+// A floor with gaps at both sides (fall in and you die) and a 40 px hole in
+// the middle for a portal. A platform over each gap reaching the map edge,
+// and one in the middle. All solid from every side.
 const Collision MapCollision[NUM_MAP_OBJ] = {
-    { {PX(100), FLOOR_TOP}, {PX(600), PX(20)} },  // floor
-    { {PX(30),  PX(350)},   {PX(170), PX(10)} },  // left platform
-    { {PX(600), PX(350)},   {PX(170), PX(10)} },  // right platform
+    { {PX(100), FLOOR_TOP}, {PX(280), PX(20)} },  // floor, left of the hole
+    { {PX(420), FLOOR_TOP}, {PX(280), PX(20)} },  // floor, right of the hole
+    { {PX(0),   PX(350)},   {PX(200), PX(10)} },  // left platform
+    { {PX(600), PX(350)},   {PX(200), PX(10)} },  // right platform
     { {PX(320), PX(270)},   {PX(160), PX(10)} },  // middle platform
+};
+
+// 8 px thick: a bullet (4 px, up to 8 px/tick) or player (10 px, up to
+// 12 px/tick) can't jump over one in a single tick, since thickness + size
+// is more than the distance moved.
+#define PORTAL_THICKNESS PX(8)
+
+const Portal MapPortals[NUM_PORTALS] = {
+    // Wrap-around at the side edges, standing on the side platforms. Tall
+    // enough that a jump from the platform stays inside them.
+    { { {PX(0), PX(200)}, {PORTAL_THICKNESS, PX(150)} }, FACING_RIGHT },
+    { { {PX(800) - PORTAL_THICKNESS, PX(200)}, {PORTAL_THICKNESS, PX(150)} }, FACING_LEFT },
+    // Fall through the hole in the floor, drop from the ceiling onto the
+    // middle platform.
+    { { {PX(380), FLOOR_TOP}, {PX(40), PORTAL_THICKNESS} }, FACING_UP },
+    { { {PX(380), 0}, {PX(40), PORTAL_THICKNESS} }, FACING_DOWN },
 };
 
 // The whole map. A player or bullet not touching it at all is "outside the
@@ -112,6 +130,90 @@ static Collision player_box(const Player *p) {
 static Collision bullet_box(const Bullet *b) {
     Collision box = { b->position, {BULLET_SIZE, BULLET_SIZE} };
     return box;
+}
+
+// Outward direction of each facing as a unit vector (y grows downward).
+static const IntVector2 FacingNormal[4] = {
+    [FACING_UP]    = {  0, -1 },
+    [FACING_RIGHT] = {  1,  0 },
+    [FACING_DOWN]  = {  0,  1 },
+    [FACING_LEFT]  = { -1,  0 },
+};
+
+// Rotate by k quarter turns clockwise (on screen, where y points down).
+// Exact in integers: each quarter turn just swaps and negates.
+static IntVector2 rotate_quarters(IntVector2 v, int k) {
+    for (int i = 0; i < k; i++) {
+        IntVector2 r = { -v.y, v.x };
+        v = r;
+    }
+    return v;
+}
+
+static IntVector2 box_center(Collision b) {
+    IntVector2 c = { b.origin.x + b.bounds.x / 2, b.origin.y + b.bounds.y / 2 };
+    return c;
+}
+
+// If a box (top-left *pos, given size) overlaps a portal while moving into
+// it, move it out of the linked portal and rotate its velocity to match.
+// Used for players and bullets. Returns true if it went through.
+static bool try_portal(IntVector2 *pos, IntVector2 *vel, IntVector2 size) {
+    Collision box = { *pos, size };
+    for (int i = 0; i < NUM_PORTALS; i++) {
+        const Portal *in = &MapPortals[i];
+
+        // Moving into the portal means against its facing: negative dot
+        // product. Also what stops instant re-entry: we leave the exit moving
+        // along its facing, so the exit can't take us straight back.
+        IntVector2 n = FacingNormal[in->facing];
+        if (vel->x * n.x + vel->y * n.y >= 0) continue;
+        if (!colliding(box, in->box)) continue;
+
+        const Portal *out = &MapPortals[i ^ 1];
+
+        // Quarter turns that take "into in" (the opposite of in's facing,
+        // which is in->facing + 2) to "out of out" (out->facing). +6 rather
+        // than -2 keeps it positive before the %, since C's % of a negative
+        // number is negative.
+        int k = (int)(out->facing - in->facing + 6) % 4;
+
+        // Where we were relative to the entry portal's centre, rotated the
+        // same way, so walking through the bottom of one portal comes out of
+        // the bottom of the other.
+        IntVector2 c_in = box_center(in->box);
+        IntVector2 c_out = box_center(out->box);
+        IntVector2 offset = {
+            pos->x + size.x / 2 - c_in.x,
+            pos->y + size.y / 2 - c_in.y,
+        };
+        offset = rotate_quarters(offset, k);
+        *vel = rotate_quarters(*vel, k);
+
+        // Keep the offset along the exit portal, but put the box just in
+        // front of it (touching, not overlapping) so it starts in open air.
+        const Collision *ob = &out->box;
+        switch (out->facing) {
+        case FACING_UP:
+            pos->x = c_out.x + offset.x - size.x / 2;
+            pos->y = ob->origin.y - size.y;
+            break;
+        case FACING_DOWN:
+            pos->x = c_out.x + offset.x - size.x / 2;
+            pos->y = ob->origin.y + ob->bounds.y;
+            break;
+        case FACING_LEFT:
+            pos->x = ob->origin.x - size.x;
+            pos->y = c_out.y + offset.y - size.y / 2;
+            break;
+        case FACING_RIGHT:
+            pos->x = ob->origin.x + ob->bounds.x;
+            pos->y = c_out.y + offset.y - size.y / 2;
+            break;
+        }
+        return true;  // at most one portal per tick
+    }
+    return false;
 }
 
 // Move the player along X by velocity.x, then push it out of any terrain it
@@ -313,6 +415,8 @@ static void update_player(GameState *s, int index, Input in, Input prev_in) {
 
     move_x(p);
     move_y(p);
+    IntVector2 player_size = { PLAYER_WIDTH, PLAYER_HEIGHT };
+    try_portal(&p->position, &p->velocity, player_size);
 
     update_gun(s, index, in, prev_in);
 }
@@ -327,6 +431,11 @@ static void update_bullets(GameState *s) {
         b->position.x += b->velocity.x;
         b->position.y += b->velocity.y;
         b->lifetime_left--;
+
+        // Before the terrain and map-edge checks, so a bullet that reached a
+        // portal is judged where it comes out.
+        IntVector2 bullet_size = { BULLET_SIZE, BULLET_SIZE };
+        try_portal(&b->position, &b->velocity, bullet_size);
 
         // Bullets move at most 8 px per tick and are 4 px big, so they can't
         // skip through a 10 px player or platform in one step.

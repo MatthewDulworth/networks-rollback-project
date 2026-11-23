@@ -64,23 +64,66 @@ Jump height = v² / 2g = 49 / 0.5 ≈ **98 px**, airtime ≈ **56 ticks**. A tap
 
 ## The map
 
-Window and map are 800 × 450 px. `MapCollision` holds four solid boxes:
+Window and map are 800 × 450 px. `MapCollision` holds five solid boxes:
 
 | Box | Position (px) | Size (px) |
 |---|---|---|
-| Floor | x 100, y 430 | 600 × 20 |
-| Left platform | x 30, y 350 | 170 × 10 |
-| Right platform | x 600, y 350 | 170 × 10 |
+| Floor, left of hole | x 100, y 430 | 280 × 20 |
+| Floor, right of hole | x 420, y 430 | 280 × 20 |
+| Left platform | x 0, y 350 | 200 × 10 |
+| Right platform | x 600, y 350 | 200 × 10 |
 | Middle platform | x 320, y 270 | 160 × 10 |
 
 - The floor stops 100 px short of each side. Falling into a gap takes you off
   the map, which kills you.
-- The side platforms hang over the gaps, so you can jump across them.
+- The 40 px hole in the middle of the floor holds a portal (see below).
+- The side platforms hang over the gaps and reach the map edges, where the
+  wrap-around portals are.
 - Platforms are 80 px apart vertically, within the 98 px jump.
 - All boxes are solid from every side, so you bump your head jumping up into
   one from below. One-way platforms would need extra logic in `move_y`.
 - `MapBounds` (the whole 800 × 450 area) is separate. Anything not touching
   it is "outside the map".
+
+## Portals
+
+`MapPortals` holds static portals, linked in pairs that sit next to each other
+in the array, so portal `i`'s partner is `i ^ 1`. Each has a box (8 px thick)
+and a `Facing`: the direction its opening faces.
+
+| Pair | Portal | Box (px) | Facing |
+|---|---|---|---|
+| Orange | Left edge | x 0, y 200, 8 × 150 | right |
+| Orange | Right edge | x 792, y 200, 8 × 150 | left |
+| Purple | Floor hole | x 380, y 430, 40 × 8 | up |
+| Purple | Ceiling | x 380, y 0, 40 × 8 | down |
+
+`try_portal()` runs for each player after `move_x`/`move_y`, and for each
+bullet after it moves (before the terrain and map-edge checks):
+
+1. **Enter** if the box overlaps a portal *and* is moving into it: the dot
+   product of velocity and the portal's outward normal is negative.
+2. **Rotate** velocity by `k = (out - in + 6) % 4` quarter turns clockwise.
+   That takes "into the entry" (entry facing + 2) to "out of the exit".
+   A quarter turn is `(x, y) → (-y, x)`, so this is exact in integers.
+3. **Place** the box just in front of the exit (touching, not overlapping),
+   keeping its offset from the portal centre (rotated the same way). Walking
+   through at platform height comes out at platform height.
+4. At most one portal per tick.
+
+- **No instant re-entry.** After step 2 the box moves *out* of the exit, so
+  step 1 can't fire on the exit. Moving back into it later (e.g. falling back
+  into a floor portal) works straight away, as the design asks.
+- **Momentum is kept** apart from direction. The drag rule in movement means
+  holding forward doesn't cap it.
+- **Same-facing pairs** (e.g. two floor portals) rotate 180°, which also flips
+  the sideways direction. All current pairs face opposite ways, so it's the
+  identity for them.
+- **No tunneling.** Thickness + size beats speed: bullets 8 + 4 > 8 px/tick,
+  players 8 + 10 > 12 px/tick.
+- **Pitfall when placing new portals:** the exit spot isn't checked for
+  terrain, so an exit placed against a wall or with a platform in front of
+  it can put a player inside the terrain.
 
 ## One tick (`sim()`)
 
@@ -190,7 +233,3 @@ Each machine controls one player, with the same keys on both:
 - All state that affects the next tick lives in `GameState`. No `static`
   locals.
 - Copy states with `memcpy` to keep padding zeroed.
-
-## Open items
-
-- Not done yet: portals.

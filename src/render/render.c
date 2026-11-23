@@ -22,6 +22,27 @@ void render_game(const GameState *state) {
         DrawRectangleRec(r, DARKGRAY);
     }
 
+    // Portals: one colour per linked pair (pairs are adjacent, so i / 2),
+    // with a light stripe on the open side so you can tell which way it faces.
+    const Color pair_colors[] = { ORANGE, PURPLE };
+    for (int i = 0; i < NUM_PORTALS; i++) {
+        const Portal *portal = &MapPortals[i];
+        Rectangle r = {
+            to_px(portal->box.origin.x), to_px(portal->box.origin.y),
+            to_px(portal->box.bounds.x), to_px(portal->box.bounds.y),
+        };
+        DrawRectangleRec(r, pair_colors[(i / 2) % 2]);
+
+        Rectangle stripe = r;
+        switch (portal->facing) {
+        case FACING_UP:    stripe.height = 2; break;
+        case FACING_DOWN:  stripe.y += r.height - 2; stripe.height = 2; break;
+        case FACING_LEFT:  stripe.width = 2; break;
+        case FACING_RIGHT: stripe.x += r.width - 2; stripe.width = 2; break;
+        }
+        DrawRectangleRec(stripe, Fade(WHITE, 0.7f));
+    }
+
     const Color player_colors[MAX_PLAYERS] = { BLUE, RED };
     const char *player_names[MAX_PLAYERS] = { "Blue", "Red" };
 

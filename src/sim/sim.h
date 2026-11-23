@@ -84,10 +84,32 @@ enum InputFields {
 // Map (static, not part of GameState)
 // --------------------------------------------------------
 
-#define NUM_MAP_OBJ 4
+#define NUM_MAP_OBJ 5
 
 // Defined in sim.c. Exposed so the renderer can draw it.
 extern const Collision MapCollision[NUM_MAP_OBJ];
+
+// Which way a portal's opening faces: things enter moving against this
+// direction and leave moving along it. Clockwise order, so the difference
+// between two facings is a number of quarter turns.
+typedef enum {
+    FACING_UP,
+    FACING_RIGHT,
+    FACING_DOWN,
+    FACING_LEFT,
+} Facing;
+
+typedef struct {
+    Collision box;
+    Facing facing;
+} Portal;
+
+// Portals are linked in pairs that sit next to each other in the array:
+// 0 with 1, 2 with 3, ... so portal i's partner is i ^ 1.
+#define NUM_PORTALS 4
+
+// Defined in sim.c, like MapCollision.
+extern const Portal MapPortals[NUM_PORTALS];
 
 // --------------------------------------------------------
 // Game state
